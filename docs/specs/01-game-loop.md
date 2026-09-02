@@ -16,9 +16,9 @@ and never see wall-clock time — only the injected tick.
 
 ```rust
 pub struct GameLoop {
-    accumulator: f64,          // wall-time carried since the last fixed tick
-    fixed_delta: f64,          // 1/60 (configurable)
-    sim_time: f64,             // simulation time (advances in fixed steps)
+    accumulator: f64,          // wall-time carried since the last fixed tick (Domain A)
+    fixed_delta: f64,          // 1/60 (configurable) — host-side pacing only
+    tick: u64,                 // fixed-step counter; the cross-boundary sim truth
     last_frame_time: f64,      // for computing frame dt
     phases: Vec<ScheduledSystem>,
     world: World,
@@ -50,7 +50,7 @@ fn run(mut self, event_loop: EventLoop<()>) {
 
             while self.accumulator >= self.fixed_delta {
                 self.accumulator -= self.fixed_delta;
-                self.sim_time += self.fixed_delta;
+                self.tick += 1;
                 self.fixed_update();
             }
 
@@ -68,7 +68,7 @@ fn run(mut self, event_loop: EventLoop<()>) {
 ```rust
 fn fixed_update(&mut self) {
     self.pre_update();                       // input → deterministic snapshot
-    let view = self.logic.build_state_view(&self.world, self.sim_time);
+    let view = self.logic.build_state_view(&self.world, self.tick);
     for sys in self.phases.iter().filter(|s| matches!(s.phase, SystemPhase::FixedUpdate)) {
         let delta = self.logic.run_pure(sys.system, &view)?;
         apply_delta(&mut self.world, &delta);
@@ -106,9 +106,14 @@ impl GameLoop {
 ```
 
 ## Time injection
-`StateView` carries `tick: u64` (frame counter) plus optional fixed-point
-`delta_time`/`sim_time` helpers derived from `fixed_delta`, so Domain B logic
-can reason in fixed units deterministically.
+`StateView` carries `tick: u64` (fixed-step counter) — the **cross-boundary
+truth**; Domain B reasons in whole fixed ticks. `sim_time` is the deterministic
+simulation time advanced by those ticks, derived host-side from `tick`. Any
+fractional `sim_time`/`delta_time` that must reach Domain B is injected as
+fixed-point `I16F16` only under an `ARCH_VERSION` bump (see `contracts`) — never
+as `f64` in the loop plumbing to Domain B. `f64` `sim_time`/`fixed_delta` stay
+Domain-A-side (accumulator pacing, render interpolation) and never cross the
+boundary.
 
 ## Constraints
 - Fixed timestep exactly 60 Hz by default (configurable).

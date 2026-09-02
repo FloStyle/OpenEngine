@@ -110,11 +110,13 @@ pub fn state_hash(world: &World, seed: u64) -> u64 {
 
 ### Error surfacing for RecoverableError
 
-When a pure system returns `Err(RecoverableError)`, the host logs it, records
-the offending system + tick, and (for inspection) rolls back that tick's partial
-delta. The debugging tools render these as first-class entries in the console
-with the stable `code`, the message, and a "jump to source" affordance in the
-editor.
+Domain B returns **one atomic `Result<WorldDelta, RecoverableError>`** per pure
+system call; on `Err` no delta from that call is applied, so there is no "partial
+delta" to roll back. When a system returns `Err(RecoverableError)`, the host logs
+it, records the offending system + tick, surfaces the `RecoverableError`, and may
+roll back the whole tick. The debugging tools render these as first-class entries
+in the console with the stable `code`, the message, and a "jump to source"
+affordance in the editor.
 
 ## Rendering into egui
 

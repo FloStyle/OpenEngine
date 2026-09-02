@@ -69,8 +69,12 @@ world are byte-identical and hashable for desync checks.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct WorldSnapshot {
     pub header: FormatHeader,
-    pub tick: u64,                        // the sim tick this was captured at
-    pub sim_time: I16F16,                 // deterministic, fixed
+    pub tick: u64,                        // the sim tick this was captured at (u64)
+    pub sim_time: u64,                    // deterministic fixed-tick count, stored u64 — never an
+                                          // I16F16 accumulator (16 integer bits overflows on long
+                                          // sessions). The persisted tick width is u64; any
+                                          // fractional sim_time reaching Domain B is injected as
+                                          // I16F16 only under an ARCH_VERSION bump.
     pub archetypes: Vec<ArchetypeSnapshot>,
 }
 
@@ -83,6 +87,8 @@ pub struct ArchetypeSnapshot {
 pub struct ColumnSnapshot {
     pub component: ComponentId,
     pub element_size: u32,                // validation vs registered size
+    pub layout_version: u32,              // per-component layout_version at write time
+                                          // (component registry, spec 21) — drives migration
     pub data: Vec<u8>,                    // len * element_size, raw Pod bytes
 }
 ```
@@ -108,9 +114,18 @@ used to test rollback.
 pub struct SaveFile {
     pub header: FormatHeader,
     pub snapshot: WorldSnapshot,          // world at tick N
-    pub replay_from: u32,                 // == snapshot.tick
+    pub replay_from: u64,                 // == snapshot.tick (u64)
     pub replay_inputs: Vec<InputBatch>,   // ordered inputs N..present
-    pub metadata: SaveMeta,               // title, wall-clock for UI only
+    pub metadata: SaveMeta,               // editor metadata; excluded from any determinism hash
+}
+
+/// Editor-facing metadata on a save, written by Domain A (UI / file browser).
+/// It is **not** sim state, so it never enters a determinism checksum.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SaveMeta {
+    pub title: String,            // human/agent-readable save name
+    pub schema_version: u32,      // SaveFile envelope revision (independent of ARCH_VERSION)
+    pub wall_clock: Option<u64>,  // real elapsed time at save — UI only (canonical wall_clock)
 }
 ```
 
@@ -121,9 +136,11 @@ checksum.
 
 Load is a pure, order-independent rebuild then an ordinary re-sim:
 
-1. Validate `header.abi_version` vs `ARCH_VERSION`; run migration if behind.
+1. Validate `header.abi_version` vs `ARCH_VERSION`; reject a newer ABI.
 2. Validate each column's `element_size` equals the currently registered
-   component's size; reject (or migrate) on mismatch.
+   component's size; reject on mismatch. If a column's `layout_version` is behind
+   the registered per-component version, the codec migrates (relocates) those
+   bytes to the current layout before the `cast_slice` rebuild.
 3. Rebuild archetypes by spawning entities in slot order and writing each column
    back with `cast_slice` — order is fixed, so rebuild is deterministic.
 4. Re-run the fixed-timestep pure systems over `replay_inputs` exactly as the
@@ -153,15 +170,21 @@ code path.
 
 ### Schema versioning & migration
 
-- Bump `ARCH_VERSION` in `contracts` on any breaking layout/enum change; the
-  loader refuses snapshots from a newer ABI.
+- Migration is **per component**, not global. Every component in the component
+  registry (spec `21`) carries its own **`layout_version`**, seeded from
+  `contracts::COMPONENT_LAYOUT_VERSION` and bumped on any `#[repr(C)]` change to
+  that component's layout. The codec records each column's `layout_version` and,
+  on load, relocates component bytes when a saved column's version is behind the
+  currently registered version — per-component versioning, not a global ABI
+  version, is what describes component-local layout drift.
+- The global `abi_version` / `ARCH_VERSION` stays for **cross-module ABI**: it
+  gates the whole envelope and the loader refuses snapshots from a newer ABI; it
+  is not a substitute for the per-component `layout_version`.
 - `format_version` in `FormatHeader` distinguishes the persistence envelope
-  (which may add/remove wrapper fields) from the ABI wall (component layouts).
-- A `migration: Vec<(from, to, fn)>` table, keyed by `abi_version`, upgrades old
-  component bytes **field-versioned** (e.g. a component records
-  `layout_version`), so an older column is converted to the current layout
-  rather than misread. Any component without a forward-migration path is
-  rejected loudly — never guessed.
+  (which may add/remove wrapper fields) from component layouts.
+- A migration map `(ComponentId, from_layout_version, to_layout_version) -> fn`
+  upgrades old component bytes on a version mismatch. Any component without a
+  forward-migration path is rejected loudly — never guessed.
 
 ## Key Rust / types
 
@@ -204,8 +227,10 @@ code path.
 - Re-sim resume: save world at tick N + replay inputs; load and re-simulate to
   `M > N`; assert state equals a fresh run from tick 0 to `M` (the key rollback +
   replay guarantee).
-- Migration: write a snapshot under an older `abi_version`, bump `ARCH_VERSION`,
-  run the migration table, assert correct upgraded bytes.
+- Migration: write a snapshot whose per-component `layout_version` predates the
+  registered version (a `#[repr(C)]` change), run the migration map, assert the
+  bytes are relocated to the current layout. Cross-module ABI gating is still
+  covered by `abi_version`/`ARCH_VERSION` mismatch rejection.
 - Editor: open a scene, edit, save, re-open; assert the entity set and column
   data round-trip exactly.
 - Hostile/foreign input: malformed or wrong-`abi_version` bytes are rejected, not
@@ -214,7 +239,8 @@ code path.
 ## Dependencies
 
 - `postcard`, `serde`, `bytemuck` (`cast_slice`), `contracts` (`Entity`,
-  `ComponentId`, `ArchetypeId`, `ColumnDescriptor`, `ARCH_VERSION`),
+  `ComponentId`, `ArchetypeId`, `ColumnDescriptor`, `ARCH_VERSION`,
+  `COMPONENT_LAYOUT_VERSION`),
   `openengine-math` (`I16F16`).
 - Host (Domain A): `std::fs` for disk I/O under `OPENENGINE_*` paths. Domain B
   unchanged; it never writes files.
@@ -225,6 +251,7 @@ code path.
    `ComponentRegistry`.
 2. Implement `save_world`/`load_world` in Domain A with version gating.
 3. Add `SaveFile` = snapshot@N + `replay_inputs`; wire re-sim resume.
-4. Add the migration table + `abi_version` gating and tests.
+4. Add the per-component `layout_version` migration map + `abi_version` gating
+   and tests.
 5. Add the editor scene save/load (scene format per spec 06).
 6. Confirm round-trip determinism and cross-platform byte-identity in CI.

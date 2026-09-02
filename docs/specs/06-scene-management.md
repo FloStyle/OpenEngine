@@ -18,7 +18,7 @@ scene I/O, lifecycle, and transitions; Domain B only ever sees the current
 world through a [`StateView`] and is oblivious that a scene boundary exists.
 
 This spec defines the `SceneHandle`, the load/unload protocol, the serialized
-scene format (which this repo's save/load system — spec `16-save-load` — will
+scene format (which this repo's save/load system — spec `16-serialization` — will
 reuse), the transition policy, deterministic spawn order, the editor's notion
 of a "current scene", and dev-time hot reload. It is deliberately independent
 of renderer and input; a scene is a pure data + system bundle.
@@ -131,7 +131,7 @@ pub enum AssetKind { Mesh, Texture, LogicWasm, Audio }
 ```
 
 Full save/load semantics (checkpoints, incremental deltas, rollback) are
-specified in **spec `16-save-load`**. Scene serialization is the narrow case:
+specified in **spec `16-serialization`**. Scene serialization is the narrow case:
 the whole world, one shot, for the transition/cold-start path. Scene loading
 calls into the same codec spec 16 defines so there is exactly one world
 codec.
@@ -256,7 +256,7 @@ release builds the file-watcher is compiled out entirely.
 ## Next steps
 
 1. Define `Scene`/`SceneId`/`SceneRegistry` in `crates/core`.
-2. Specify the shared world codec with spec `16-save-load`; implement
+2. Specify the shared world codec with spec `16-serialization`; implement
    `SceneFileHeader` + postcard encode/decode.
 3. Implement load/unload at flush boundaries in `GameLoop`.
 4. Implement deterministic spawn order + generation-preserving load.

@@ -275,8 +275,15 @@ bash scripts/build.sh
 python3 brain/orchestrator.py verify-wasm-purity crates/core/assets/logic.wasm   # -> [PURE]
 python3 brain/orchestrator.py verify-deps
 
-# Determinism (run the deterministic tests 3×, bit-identical):
-for i in 1 2 3; do cargo test --workspace determinism -- --exact; done
+# Determinism (run the deterministic tests 3×, bit-identical).
+# 'determinism' is a substring filter — do NOT add --exact, which only matches a
+# test literally named "determinism" and would run zero tests. The guard below
+# asserts each run actually executed >= 1 determinism test.
+for i in 1 2 3; do
+  out="$(cargo test --workspace determinism)" || exit 1
+  printf '%s\n' "$out" | grep -q 'test result: ok' \
+    || { echo "FAIL: determinism run $i executed no tests"; exit 1; }
+done
 
 # Reproducible environment / full gate:
 bash scripts/requirements.sh

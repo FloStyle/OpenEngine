@@ -104,7 +104,10 @@ of the portability rule and catches host-only drift:
 
 Determinism is a product requirement (spec `17`). Run the deterministic tests
 **3 separate times** so a flaky nondeterminism cannot pass once, and run them
-for both portability targets where a cross-compiler is available:
+for both portability targets where a cross-compiler is available. All CI runs on
+the **native host**; the **only** wasm artifact in the pipeline is `logic.wasm`
+(Domain B), built and gated by the `purity`/`verify-wasm-purity` job. The
+determinism job therefore runs the native `cargo test` suite — not wasm.
 
 ```yaml
   determinism:
@@ -113,10 +116,15 @@ for both portability targets where a cross-compiler is available:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # 'determinism' is a substring filter — NO --exact (a bare --exact matches
+      # only a test literally named "determinism" and would run zero tests).
+      # The grep guard asserts each of the 3 runs executed >= 1 determinism test.
       - name: Deterministic suite, run 3× (bit-identical expected)
         run: |
           for i in 1 2 3; do
-            cargo test --workspace determinism -- --exact || exit 1
+            out="$(cargo test --workspace determinism)" || exit 1
+            printf '%s\n' "$out" | grep -q 'test result: ok' \
+              || { echo "FAIL: determinism run $i executed no tests"; exit 1; }
           done
 ```
 
@@ -279,7 +287,12 @@ cargo test --workspace
 bash scripts/build.sh && python3 brain/orchestrator.py verify-wasm-purity crates/core/assets/logic.wasm  # [PURE]
 python3 brain/orchestrator.py verify-deps
 docker build -t openengine-test . && docker run --rm openengine-test
-for i in 1 2 3; do cargo test --workspace determinism -- --exact; done
+# determinism: substring filter, no --exact; each run must execute >= 1 test
+for i in 1 2 3; do
+  out="$(cargo test --workspace determinism)" || exit 1
+  printf '%s\n' "$out" | grep -q 'test result: ok' \
+    || { echo "FAIL: determinism run $i executed no tests"; exit 1; }
+done
 RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links" cargo doc --workspace --no-deps
 cargo audit   # security-sensitive / before release
 

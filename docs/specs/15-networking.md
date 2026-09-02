@@ -68,7 +68,7 @@ small, fixed-width, and versioned so the host can reject mismatched modules.
 #[derive(Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable,
          serde::Serialize, serde::Deserialize)]
 pub struct InputCommand {
-    pub tick: u32,          // the simulation tick this input targets
+    pub tick: u64,          // the simulation tick this input targets (u64 == StateView.tick)
     pub seq:  u16,          // local send sequence (for ordering/dedup)
     pub move_x: i8,         // -1..=1, quantized fixed input
     pub move_y: i8,
@@ -136,10 +136,10 @@ confirmed.
 
 ```rust
 pub struct RollbackBuffer {
-    inputs: VecDeque<(u32 /*tick*/, LocalInput, RemoteInput)>,
-    states: VecDeque<(u32 /*tick*/, WorldSnapshot)>,
+    inputs: VecDeque<(u64 /*tick*/, LocalInput, RemoteInput)>,
+    states: VecDeque<(u64 /*tick*/, WorldSnapshot)>,
     window: usize,          // ticks of history kept for rollback
-    confirmed_tick: u32,    // tick the remote has acked as safe
+    confirmed_tick: u64,    // tick the remote has acked as safe
 }
 ```
 
@@ -159,7 +159,7 @@ This is exactly the same apply-delta path the offline loop uses; the only new
 ingredient is being able to reload an earlier world state.
 
 ```rust
-fn rollback_to(&mut self, tick: u32, snap: &WorldSnapshot) {
+fn rollback_to(&mut self, tick: u64, snap: &WorldSnapshot) {
     self.world = snap.clone();                       // restore
     for (t, li, ri) in self.inputs.iter().filter(|(t,_,_)| *t >= tick) {
         // feed the (possibly corrected) remote input, run systems
@@ -192,12 +192,19 @@ silently diverge.
 
 ## Key Rust / types
 
-- `InputCommand` (Pod), `InputBatch`, `RemoteInput`/`LocalInput` — fixed-size
-  wire types in `contracts`.
+- `InputCommand` (Pod), `InputBatch`, `RemoteInput`/`LocalInput`, `WorldHash` —
+  fixed-size wire/rollback types.
 - Host `Netcode` (tokio/UDP/QUIC) in `crates/net`; never linked into Domain B.
 - `RollbackBuffer` of `WorldSnapshot` per tick in a rolling window.
-- `WorldHash` deterministic digest used for desync checks.
 - Pure-system driver shared verbatim with the offline `01-game-loop` fixed tick.
+
+> **Pre-implementation ABI note.** `InputBatch`, `InputCommand`,
+> `LocalInput`/`RemoteInput`, and `WorldHash` are **not yet defined** in
+> `contracts` (they are additive ABI work, recorded in `docs/abi/CHANGES.md`,
+> and must land in `contracts` before netcode is implemented). `contracts::NetState`
+> (`NetState { tick: u64, player_id: u32, input_hash: u64 }`) **already exists**;
+> its `tick: u64` matches `StateView::tick`/`WorldSnapshot::tick`, and every
+> wire/rollback tick field above is declared `u64` to match.
 
 ## Constraints
 
