@@ -1,0 +1,28 @@
+# --- Rust ---
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# We COMMIT Cargo.lock for reproducibility of the wasm logic build.
+
+# --- Python (Brain) ---
+__pycache__/
+*.py[cod]
+.brain_venv/
+.venv/
+.pytest_cache/
+
+# --- Editors / OS ---
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- AI session scratch (governance never commits its own telemetry) ---
+.ai/sessions/*.jsonl
+.ai/sessions/*.md.tmp
+
+# --- Generated wasm artifacts (rebuilt by CI, not authored) ---
+crates/logic-sandbox/target-wasm/
+artifacts/

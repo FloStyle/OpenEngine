@@ -1,0 +1,31 @@
+[package]
+name = "openengine-logic-sandbox"
+description = "Domain B: #![no_std] pure game logic compiled to Wasm. The ONLY author of WorldDelta."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# cdylib  → loadable Wasm module (the thing the host instantiates & hot-reloads)
+# rlib    → lets the host unit-test logic on the native target for fast CI
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+openengine-contracts = { workspace = true }
+openengine-math = { workspace = true }
+# bytemuck is safe/no_std and gives Domain B a matching cast helper for payloads.
+bytemuck.workspace = true
+# Guest heap allocator, needed only for the no_std wasm artifact.
+dlmalloc = { workspace = true, optional = true }
+
+[features]
+# Enable ONLY when cross-compiling for wasm32-unknown-unknown:
+#   cargo build -p openengine-logic-sandbox --target wasm32-unknown-unknown --features wasm-alloc
+wasm-alloc = ["dep:dlmalloc"]
+
+[lints]
+workspace = true
+
+# Logic is never allowed to accidentally pull Domain A. There is no wgpu /
+# winit / wasmtime / egui / rayon in this dep tree — enforced by review + CI.

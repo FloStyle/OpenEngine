@@ -1,0 +1,18 @@
+[package]
+name = "openengine-core"
+description = "Domain A: host runtime — wgpu(Vulkan) renderer, wasmtime sandbox host, winit event loop, multithreaded job system."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+wgpu.workspace = true
+winit.workspace = true
+wasmtime.workspace = true
+rayon.workspace = true
+openengine-contracts = { workspace = true }
+openengine-ecs = { path = "../ecs" }
+
+[lints]
+workspace = true

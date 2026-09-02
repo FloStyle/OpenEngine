@@ -1,0 +1,113 @@
+# ============================================================================
+# OpenEngine — AI-Native Rust + Wasm game engine
+#
+# Virtual workspace root. This file is a *governance* surface as much as a
+# build definition: every shared dependency version and every inherited lint
+# is pinned here so that autonomous agents converge instead of drifting.
+#
+# Rule for agents:
+#   - Adding a *new* workspace dependency is an ABI-adjacent decision.
+#     Do it here, then update every consuming crate. Do NOT fork versions
+#     inside individual crates unless the crates section documents why.
+#   - Read contracts/src/lib.rs (ARCH_VERSION) before touching anything in
+#     this workspace. See AGENTS.md, "The Context Rule".
+# ============================================================================
+
+[workspace]
+resolver = "2"
+members = [
+    # The Immutable ABI — must remain no_std-compatible and dependency-lite.
+    "contracts",
+    # Domain A — host side. std, GPU, threads allowed.
+    "crates/core",
+    "crates/ecs",
+    "crates/editor",
+    # Domain B — game logic. Pure, no_std, deterministic. May NOT pull Domain A.
+    "crates/logic-sandbox",
+    # Domain B math — no_std, deterministic fixed-point.
+    "crates/math",
+]
+# Deliberately NO wildcard member globs: onboarding a crate is an intentional
+# act that requires its Cargo.toml + lib.rs + lint review to exist first.
+
+# ---------------------------------------------------------------------------
+# Shared package metadata (inherit via `version.workspace = true` etc.)
+# ---------------------------------------------------------------------------
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/your-org/OpenEngine"
+authors = ["Project OpenEngine"]
+
+# ---------------------------------------------------------------------------
+# Workspace dependency catalog — the ONLY place dependency versions live.
+# ---------------------------------------------------------------------------
+[workspace.dependencies]
+
+# ---- Domain A : Host / Renderer (std, GPU, threading) ---------------------
+# wgpu strictly prefers the Vulkan backend. `default-features = false` keeps
+# the Metal/GL/DX backends from being compiled in unless a port explicitly
+# needs them (tracked under an RFC, never silently).
+wgpu     = { version = "25.0", default-features = false, features = ["vulkan"] }
+winit    = { version = "0.30", default-features = false, features = ["rwh_06"] }
+wasmtime = { version = "26.0", default-features = false, features = ["cranelift", "runtime"] }
+
+egui     = { version = "0.31", default-features = false, features = ["default_fonts"] }
+egui-wgpu = { version = "0.31", default-features = false }
+
+# ---- Domain B : Deterministic math + zero-copy wire format ---------------
+# fixed is the ONLY sanctioned fractional representation in game logic.
+fixed    = { version = "1.28", default-features = false }
+glam     = { version = "0.29", default-features = false, features = ["bytemuck"] }
+
+# ---- Cross-domain transport ----------------------------------------------
+# bytemuck derives are required for SoA Pod descriptors.
+bytemuck = { version = "1.21", features = ["derive"] }
+# postcard is the canonical host<->wasm wire codec (deterministic, no_std).
+# "alloc" keeps encode/decode working inside the no_std guest.
+postcard = { version = "1.1", default-features = false, features = ["alloc"] }
+serde    = { version = "1", default-features = false, features = ["derive", "alloc"] }
+
+# ---- General / threading (Domain A only) ---------------------------------
+rayon    = { version = "1.10" }
+
+# ---- Intra-workspace member crates ----------------------------------------
+# Declared as path workspace-deps so any member can inherit them uniformly.
+openengine-contracts = { path = "contracts" }
+openengine-math = { path = "crates/math" }
+openengine-ecs = { path = "crates/ecs" }
+
+# ---- Wasm guest allocator (Domain B, no_std artifact only) ----------------
+# `global` exposes GlobalDlmalloc (the #[global_allocator] used by the guest).
+dlmalloc  = { version = "0.2", features = ["global"] }
+
+# ---------------------------------------------------------------------------
+# Workspace lints — inherited by every crate via `[lints] workspace = true`.
+# ---------------------------------------------------------------------------
+[workspace.lints.rust]
+# Safe-by-default wall. The Core side delegates all `unsafe` into third-party
+# crates (wgpu, wasmtime); OpenEngine source itself is forbidden from writing
+# `unsafe`. Should a Domain-A crate ever need a *narrow* carve-out, that is an
+# RFC-grade decision — see AGENTS.md "Unsafe Policy" — implemented by moving
+# the unsafe into ONE dedicated `unsafe_impl` module with an `#[allow]` and a
+# written justification, never by weakening this default.
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+# Everything clippy::all flags becomes a hard error on CI and locally.
+# Agents must fix, not silence. To suppress a lint you must prove why.
+all = { level = "deny", priority = -1 }
+# Encourage errors to be used (Result/option) in the API surface.
+must_use_candidate = { level = "warn", priority = -1 }
+
+# ---------------------------------------------------------------------------
+# Profile knobs for deterministic + wasm-friendly builds.
+# ---------------------------------------------------------------------------
+[profile.release]
+# Determinism helper: strip nothing, keep symbols for profiling in Wasm.
+debug = "line-tables-only"
+# Domain B Wasm artifacts are built with panic=abort (see
+# crates/logic-sandbox/Cargo.toml) — a trapped logic panic must crash the
+# guest and surface as a RecoverableError, never unwind into the host.

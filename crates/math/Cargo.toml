@@ -1,0 +1,21 @@
+[package]
+name = "openengine-math"
+description = "Domain B: deterministic fixed-point math (no_std). The ONLY sanctioned numeric layer for game logic."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+fixed.workspace = true
+# NOTE: glam is intentionally NOT a dependency here. Domain B is no_std and
+# glam needs a std/libm backend; this crate must stay dependency-free so the
+# wasm guest links it trivially. Any `glam` interop happens on the Domain A
+# side only. See workspace.dependencies.glam.
+
+[lints]
+workspace = true
+
+[package.metadata.math]
+# This crate MUST stay no_std and free of threads/IO so it can be linked into
+# the Wasm logic guest unchanged.

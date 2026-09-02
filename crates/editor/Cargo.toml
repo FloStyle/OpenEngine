@@ -1,0 +1,20 @@
+[package]
+name = "openengine-editor"
+description = "Domain A: egui-based editor UI, run as a system within the ECS."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+egui.workspace = true
+openengine-contracts = { workspace = true }
+openengine-ecs = { path = "../ecs" }
+
+[features]
+# GPU-backend integration is gated so headless CI can build the editor without
+# a Vulkan driver. Add "glow"/wgpu renderer feature when the editor milestone lands.
+default = []
+
+[lints]
+workspace = true

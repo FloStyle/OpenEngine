@@ -1,0 +1,8 @@
+# Pin the toolchain channel for reproducible logic builds.
+#
+# NOTE: if you need to verify Domain B locally, add the wasm target once:
+#   rustup target add wasm32-unknown-unknown
+# (CI installs components itself — see .github/workflows/ci.yml.)
+[toolchain]
+channel = "stable"
+profile = "minimal"
