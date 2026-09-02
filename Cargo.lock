@@ -1403,8 +1403,7 @@ name = "openengine-ecs"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
- "openengine-contracts",
- "rayon",
+ "openengine-math",
 ]
 
 [[package]]
