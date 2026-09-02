@@ -26,3 +26,4 @@ Thumbs.db
 # --- Generated wasm artifacts (rebuilt by CI, not authored) ---
 crates/logic-sandbox/target-wasm/
 artifacts/
+crates/core/assets/logic.wasm

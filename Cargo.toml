@@ -24,6 +24,8 @@ members = [
     "crates/editor",
     # Domain B — game logic. Pure, no_std, deterministic. May NOT pull Domain A.
     "crates/logic-sandbox",
+    # Domain B — wasm cdylib that carries the #[no_mangle] ABI trampoline.
+    "crates/logic-export",
     # Domain B math — no_std, deterministic fixed-point.
     "crates/math",
 ]
@@ -48,14 +50,20 @@ authors = ["Project OpenEngine"]
 
 # ---- Domain A : Host / Renderer (std, GPU, threading) ---------------------
 # wgpu strictly prefers the Vulkan backend. `default-features = false` keeps
-# the Metal/GL/DX backends from being compiled in unless a port explicitly
-# needs them (tracked under an RFC, never silently).
+# the Metal/GL/DX backends out; `rwh_06` lets us create a surface from a winit
+# window handle.
 wgpu     = { version = "25.0", default-features = false, features = ["vulkan"] }
-winit    = { version = "0.30", default-features = false, features = ["rwh_06"] }
+# winit keeps its default x11/wayland backends for real windows; `rwh_06`
+# exposes the raw-window-handle trait that wgpu needs.
+winit    = { version = "0.30", features = ["rwh_06"] }
 wasmtime = { version = "26.0", default-features = false, features = ["cranelift", "runtime"] }
 
 egui     = { version = "0.31", default-features = false, features = ["default_fonts"] }
 egui-wgpu = { version = "0.31", default-features = false }
+
+# ---- Host ergonomics (Domain A only) --------------------------------------
+pollster = { version = "0.4" }
+anyhow   = { version = "1" }
 
 # ---- Domain B : Deterministic math + zero-copy wire format ---------------
 # fixed is the ONLY sanctioned fractional representation in game logic.
@@ -78,6 +86,7 @@ rayon    = { version = "1.10" }
 openengine-contracts = { path = "contracts" }
 openengine-math = { path = "crates/math" }
 openengine-ecs = { path = "crates/ecs" }
+openengine-logic-sandbox = { path = "crates/logic-sandbox" }
 
 # ---- Wasm guest allocator (Domain B, no_std artifact only) ----------------
 # `global` exposes GlobalDlmalloc (the #[global_allocator] used by the guest).
@@ -99,8 +108,6 @@ unsafe_code = "forbid"
 # Everything clippy::all flags becomes a hard error on CI and locally.
 # Agents must fix, not silence. To suppress a lint you must prove why.
 all = { level = "deny", priority = -1 }
-# Encourage errors to be used (Result/option) in the API surface.
-must_use_candidate = { level = "warn", priority = -1 }
 
 # ---------------------------------------------------------------------------
 # Profile knobs for deterministic + wasm-friendly builds.

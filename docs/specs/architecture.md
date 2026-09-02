@@ -36,6 +36,31 @@ Status: **scaffold / v0**. Mirrors `AGENTS.md` and `contracts/`.
 - Determinism: `fixed` math only in Domain B; `f32` only on the GPU/host side,
   crossing via `openengine-math::quantize_to_f32`.
 
+## Living window (Phase 2 — the first end-to-end slice)
+
+A running `winit` window whose clear colour is **computed inside Domain B** and
+driven by Domain A, proving the Triforce boundary for real:
+
+```text
+winit frame ──tick──▶ logic-export (wasm) ──▶ logic-sandbox::tick_color
+                      (no_std + fixed math)
+                      returns WorldDelta{ DeferredCommand::ClearColor }
+                      postcard-encoded into guest memory
+   ▲                                                 │
+   └── wgpu (Vulkan) clears surface with that colour ◄┘
+```
+
+- `crates/logic-export` is the wasm `cdylib` carrying the `#[no_mangle]`
+  trampoline (`openengine_alloc`, `openengine_tick`). It must not inherit
+  `forbid(unsafe_code)` because `#[no_mangle]` is an "unsafe attribute", so the
+  forbid stays on all real logic.
+- The guest stays **PURE** — `brain/orchestrator.py verify` reports no std/WASI
+  imports. `StateView` carries only a `tick` for now; ECS memory bridging is not
+  part of this slice.
+- Build the module with `bash scripts/build.sh`, then
+  `cargo run -p openengine-core` (needs a Vulkan-capable display).
+
 ## Not yet implemented (deliberately)
-ECS column storage/archetypes, the wasmtime bridge, the Vulkan renderer, the
-job scheduler, the egui panels, and the LLM Critic RAG loop. Milestones to come.
+ECS column storage/archetypes, zero-copy SoA↔wasm bridging, the real renderer
+pass (only a clear colour so far), the job scheduler, the egui panels, and the
+LLM Critic RAG loop. Milestones to come.

@@ -1,28 +1,20 @@
 [package]
 name = "openengine-logic-sandbox"
-description = "Domain B: #![no_std] pure game logic compiled to Wasm. The ONLY author of WorldDelta."
+description = "Domain B: #![no_std] pure game logic. Author of WorldDelta. No raw wasm exports here."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
-# cdylib  → loadable Wasm module (the thing the host instantiates & hot-reloads)
-# rlib    → lets the host unit-test logic on the native target for fast CI
+# Pure logic is an rlib. The no_std wasm cdylib with #[no_mangle] exports lives
+# in the separate `openengine-logic-export` crate (exports are "unsafe
+# attributes" and would violate this crate's forbid(unsafe_code)).
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [dependencies]
 openengine-contracts = { workspace = true }
 openengine-math = { workspace = true }
-# bytemuck is safe/no_std and gives Domain B a matching cast helper for payloads.
-bytemuck.workspace = true
-# Guest heap allocator, needed only for the no_std wasm artifact.
-dlmalloc = { workspace = true, optional = true }
-
-[features]
-# Enable ONLY when cross-compiling for wasm32-unknown-unknown:
-#   cargo build -p openengine-logic-sandbox --target wasm32-unknown-unknown --features wasm-alloc
-wasm-alloc = ["dep:dlmalloc"]
 
 [lints]
 workspace = true

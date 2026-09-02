@@ -17,4 +17,4 @@ workspace = true
 
 [package.metadata.abi]
 # Enforced at runtime by brain/orchestrator.py::verify_abi_fingerprint.
-current = "1"
+current = "2"

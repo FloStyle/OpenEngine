@@ -31,7 +31,7 @@ else.
 | Domain | Crates | Rights | Forbidden |
 |--------|--------|--------|-----------|
 | **A — Core** (host) | `crates/core`, `crates/ecs`, `crates/editor` | `std`, `wgpu`(Vulkan), threads, files, windowing | — (see Unsafe Policy) |
-| **B — Logic** (guest) | `crates/logic-sandbox`, `crates/math` | `#![no_std]`, `alloc`, pure FP, `fixed` math | `std`, `wgpu`, threads, I/O, raw `f32` in logic |
+| **B — Logic** (guest) | `crates/logic-sandbox` (logic), `crates/logic-export` (wasm cdylib bridge), `crates/math` | `#![no_std]`, `alloc`, pure FP, `fixed` math | `std`, `wgpu`, threads, I/O, raw `f32` in logic |
 
 Rules that keep the boundary intact:
 
@@ -124,7 +124,7 @@ drift. Conventions that keep you safe:
 ### Suggested entry points by role
 
 - **Building a new gameplay system** → read `contracts/`, copy
-  `crates/logic-sandbox/src/lib.rs`'s `gravity_demo` shape, return a `WorldDelta`.
+  `crates/logic-sandbox/src/lib.rs`'s `tick_color` shape, return a `WorldDelta`.
 - **Working on the ECS / renderer** → Domain A; read `contracts/` then
   `crates/ecs/` or `crates/core/`.
 - **Asked to "make it faster"** → profile first; `Mutex` removal and `cast_slice`
@@ -148,4 +148,4 @@ A change is *done* only when **all** of the following hold:
 
 ---
 
-*Last reviewed: ABI v1.*
+*Last reviewed: ABI v2.*

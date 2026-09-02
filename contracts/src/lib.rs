@@ -47,7 +47,7 @@ use core::fmt;
 /// Increment on every breaking layout/behaviour change to any type in this
 /// crate. The host refuses to load a logic module whose compiled
 /// `ABI_FINGERPRINT` does not match the host build. See `docs/abi/CHANGES.md`.
-pub const ARCH_VERSION: u32 = 1;
+pub const ARCH_VERSION: u32 = 2;
 
 // ────────────────────────────────────────────────────────────────────────────
 // § 0. Handles & identifiers
@@ -268,6 +268,10 @@ impl ColumnDescriptor {
 ///   lifetime-free owned buffer here or you break the host↔guest sharing model.
 #[derive(Clone, Copy, Debug)]
 pub struct StateView<'arena> {
+    /// Deterministic frame counter for this system invocation. In the full ECS
+    /// bridge this is derived from the host tick; for the minimal vertical
+    /// slice it is the entire input to the pure system.
+    pub tick: u64,
     /// Column descriptors, one per archetype column present in this call.
     pub columns: &'arena [ColumnDescriptor],
     /// The packed, byte-addressed arena backing every column above.
@@ -277,6 +281,17 @@ pub struct StateView<'arena> {
 }
 
 impl<'arena> StateView<'arena> {
+    /// An empty, tick-only view — used before ECS bridging exists and by the
+    /// guest trampoline, which receives the tick as a raw argument.
+    pub fn tick_only(tick: u64) -> Self {
+        StateView {
+            tick,
+            columns: &[],
+            arena: &[],
+            byte_budget: 0,
+        }
+    }
+
     /// Returns the descriptor for a component id in a given archetype, if the
     /// archetype has it in view.
     pub fn column(&self, component: ComponentId) -> Option<ColumnDescriptor> {
@@ -359,6 +374,25 @@ pub enum DeferredCommand {
         topic: u32,
         data: alloc::vec::Vec<u8>,
     },
+    /// Clear the host window/framebuffer to `rgba` before any further drawing.
+    ///
+    /// This is the ABI signal used by the minimal vertical slice ("the living
+    /// window"). The `f32` values are a **display boundary only** — they are
+    /// the exact `fixed -> f32` conversion performed at the instant the command
+    /// is emitted. Gameplay math never uses raw `f32` (see the Determinism Law);
+    /// it reaches the GPU in normalized color space.
+    ClearColor { rgba: [f32; 4] },
+}
+
+impl WorldDelta {
+    /// The first `ClearColor` command in this delta, if any. Convenience used
+    /// by the host renderer in the minimal vertical slice.
+    pub fn clear_color(&self) -> Option<[f32; 4]> {
+        self.deferred.iter().find_map(|cmd| match cmd {
+            DeferredCommand::ClearColor { rgba } => Some(*rgba),
+            _ => None,
+        })
+    }
 }
 
 /// What kind of renderable a render command refers to. Pure logic may only
@@ -418,8 +452,8 @@ mod tests {
     use alloc::vec;
 
     #[test]
-    fn arch_is_one() {
-        assert_eq!(ARCH_VERSION, 1);
+    fn arch_matches() {
+        assert_eq!(ARCH_VERSION, 2);
     }
 
     #[test]

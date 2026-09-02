@@ -10,23 +10,19 @@
 //! 2. `#![forbid(unsafe_code)]` — you literally cannot write `unsafe` here.
 //! 3. No threads, no wgpu, no timing — the host owns all of that.
 //! 4. All fractional math MUST use `openengine-math` (`fixed`-backed) — `f32`
-//!    is forbidden inside game logic because it is not bit-deterministic
-//!    across hosts. See the Determinism Law in `AGENTS.md`.
+//!    is forbidden *inside the maths* because it is not bit-deterministic
+//!    across hosts. `f32` appears only at the instant a value is emitted to
+//!    the display boundary (see [`DeferredCommand::ClearColor`]).
 //! 5. You may only *observe* state through [`StateView`] and only *propose*
 //!    change through the returned [`WorldDelta`]. State is immutable; side
 //!    effects are forbidden.
 //!
-//! ## What "a system" looks like
+//! ## The current vertical slice: `tick_color`
 //!
-//! The idiomatic entry point has the signature below. A later proc-macro crate
-//! (`openengine-system-macros`) will expand a real `#[system]` attribute into
-//! an exported `extern "C"` trampoline; the scaffold keeps the plain function
-//! form so the ABI compiles and unit-tests today without the macro.
-//!
-//! ```text
-//! // #[system]            // <-- future proc-macro, same signature
-//! pub fn gravity_tick(view: &StateView<'_>) -> Result<WorldDelta, RecoverableError>;
-//! ```
+//! [`tick_color`] is the pure system that powers "the living window". Given a
+//! frame `tick`, it computes a cycling RGB value with deterministic fixed-point
+//! arithmetic and returns it as a [`WorldDelta`] carrying a single
+//! [`DeferredCommand::ClearColor`]. The host renders that color.
 
 // The shipped Domain-B artifact is ALWAYS built for `wasm32-unknown-unknown`,
 // so there this crate is `#![no_std]`. When the host compiles it as an `rlib`
@@ -37,15 +33,7 @@
 
 extern crate alloc;
 
-// Guest memory allocator. The `wasm-alloc` feature is enabled ONLY when
-// cross-compiling the real logic module (see `docs/specs/architecture.md`).
-// `dlmalloc::GlobalDlmalloc` is the canonical no_std allocator for wasm; the
-// `unsafe` it requires lives inside the dependency, not in this crate.
-#[cfg(all(target_arch = "wasm32", feature = "wasm-alloc"))]
-#[global_allocator]
-static DLMALLOC: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
-
-use contracts::{ArchetypeId, ColumnWrite, ComponentId, RecoverableError, StateView, WorldDelta};
+use contracts::{DeferredCommand, RecoverableError, StateView, WorldDelta};
 use openengine_contracts as contracts;
 
 // ── Deterministic fixed-point aliases (the ONLY numeric language of logic) ──
@@ -61,75 +49,123 @@ pub mod prelude {
 
 // NOTE on wasm exports: exporting a raw `#[no_mangle] extern` symbol is an
 // "unsafe attribute" and is therefore incompatible with `forbid(unsafe_code)`.
-// When the wasmtime bridge milestone lands, the tiny host-call trampoline
-// (which contains NO logic, only a typed call through the ABI) will live in a
-// separate shim crate free of that forbid, or use `#[unsafe(no_mangle)]` gated
-// to the guest target only. The pure logic here never needs a raw export.
-
-/// Zero-cost panic surface. Logic never unwinds across the host boundary; a
-/// trapped panic becomes a `GUEST_PANIC` [`RecoverableError`] on the host.
-#[cfg(all(target_arch = "wasm32", not(test)))]
-#[panic_handler]
-fn guest_panic(_info: &core::panic::PanicInfo) -> ! {
-    loop {}
-}
+// The tiny host-call trampoline (which contains NO logic, only a typed call
+// through the ABI) lives in the separate `logic-export` crate, which is built
+// for wasm without that forbid. The pure logic here never needs a raw export.
+// That crate is also where the guest panic handler + global allocator live, so
+// this rlib defines neither (a lang item may only appear once in the link).
 
 // ────────────────────────────────────────────────────────────────────────────
-// A dummy system proving the ABI compiles end to end.
-//
-// It performs a READ-ONLY, deterministic walk over the state view and returns
-// an empty delta. It exists so that `cargo check` on `logic-sandbox` proves:
-//   contracts (no_std) ──> logic-sandbox (no_std)   compiles.
+// § The "living window" pure system
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Dummy column id used only by the scaffold example.
-///
-/// TODO(demo): replace this whole module with your first real system.
-const COLUMN_POSITION: ComponentId = ComponentId(0);
+/// A fixed-point scalar for color channels. `Q16.16`, exact integer math.
+type ColorFixed = openengine_math::I16F16;
 
-/// Minimal "gravity" demo system.
-///
-/// Reads a read-only count of entities in a position column and returns an
-/// empty delta. Demonstrates the exact pure signature:
-///
-/// `fn(&StateView) -> Result<WorldDelta, RecoverableError>`
-///
-/// Replace the body with real logic. Keep the signature and the `-> Result<..>`
-/// — both are what the Wasm trampoline and the host scheduler depend on.
-pub fn gravity_demo(view: &StateView<'_>) -> Result<WorldDelta, RecoverableError> {
-    // Purely observational: we read, never write, never allocate needlessly.
-    let observed_count = view.column(COLUMN_POSITION).map(|c| c.count).unwrap_or(0);
+/// Length of one full colour cycle, in ticks (a triangle wave up & back).
+const CYCLE_TICKS: u64 = 510;
 
-    // Deterministic fixed-point arithmetic — never f32. `fx!` builds a
-    // fixed<16,16> from an f32 literal at build time so the source is legible
-    // while the runtime value is exact.
-    let gravity = openengine_math::fx!(0.0);
-    let _scaled = gravity
-        .checked_mul(openengine_math::fx!(1.0))
-        .unwrap_or(gravity);
-    let _ = observed_count; // read for determinism tracing in the future
-
-    // Deterministic decision: nothing to change this tick → empty delta.
-    Ok(WorldDelta::default())
-}
-
-/// A real example: build a batched SoA write the host can apply zero-copy.
-/// Each element of `payload` is exactly `4` bytes (a `u32` velocity column).
-#[allow(dead_code)]
-fn example_column_write() -> ColumnWrite {
-    let velocities: [u32; 3] = [10, 20, 30];
-    ColumnWrite {
-        archetype: ArchetypeId(1),
-        component: COLUMN_POSITION,
-        indices: alloc::vec![0, 1, 2],
-        // Zero-copy: raw bytes already contiguous, host casts with bytemuck.
-        payload: bytemuck_slice_to_vec(&velocities),
+/// Triangle-wave intensity in `0..=255` for a given tick.
+///
+/// Deterministic by construction: a pure function of `tick` — no sine tables,
+/// no floating point, no ambient randomness. Over one cycle the value ramps
+/// `0→255→0`, which keeps the colour visibly cycling.
+fn wave(tick: u64) -> u16 {
+    let m = tick % CYCLE_TICKS;
+    if m < (CYCLE_TICKS / 2) {
+        m as u16
+    } else {
+        (CYCLE_TICKS - m) as u16
     }
 }
 
-/// NOTE: kept dependency-light so Domain B stays no_std — mirrors what the host
-/// does with `bytemuck::cast_slice`, but producing an owned guest buffer.
-#[allow(dead_code)]
-fn bytemuck_slice_to_vec<T: bytemuck::Pod>(src: &[T]) -> alloc::vec::Vec<u8> {
-    alloc::vec::Vec::from(bytemuck::cast_slice(src))
+/// Normalise a `0..=255` channel to the fixed interval `0.0..=1.0`.
+fn channel_fixed(byte: u16) -> ColorFixed {
+    ColorFixed::from_num(byte as i32) / ColorFixed::from_num(255)
+}
+
+/// Convert a fixed colour channel to `f32` — the ONLY place raw `f32` enters.
+///
+/// This happens solely because the [`DeferredCommand::ClearColor`] ABI and the
+/// GPU both speak `f32`. All computation stays fixed-point; the conversion is a
+/// lossless-enough last step that is identical across hosts.
+fn channel_f32(byte: u16) -> f32 {
+    channel_fixed(byte).to_num::<f32>()
+}
+
+/// Pure RGB computation for a tick. Returns channels `0..=255`.
+///
+/// Three triangle waves offset by a third of the cycle so the channels never
+/// peak together, producing a continuously shifting hue.
+pub fn rgb_for_tick(tick: u64) -> [u16; 3] {
+    let third = CYCLE_TICKS / 3; // 170
+    [
+        wave(tick),
+        wave(tick.wrapping_add(third)),
+        wave(tick.wrapping_add(2 * third)),
+    ]
+}
+
+/// The pure system that drives the living window.
+///
+/// Reads the frame tick from the view, computes a deterministic colour with
+/// fixed-point math, and returns a [`WorldDelta`] whose single deferred command
+/// is a [`DeferredCommand::ClearColor`]. This is the exact signature the host
+/// trampoline (`logic-export`) drives through the Wasm boundary.
+pub fn tick_color(view: &StateView<'_>) -> Result<WorldDelta, RecoverableError> {
+    let [r, g, b] = rgb_for_tick(view.tick);
+    let mut delta = WorldDelta::default();
+    delta.deferred.push(DeferredCommand::ClearColor {
+        rgba: [channel_f32(r), channel_f32(g), channel_f32(b), 1.0],
+    });
+    Ok(delta)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use openengine_contracts::{DeferredCommand, StateView};
+
+    #[test]
+    fn tick_color_returns_a_clear_color_delta() {
+        let view = StateView::tick_only(10);
+        let delta = tick_color(&view).expect("pure system cannot fail");
+        let rgba = delta.clear_color().expect("must carry a ClearColor");
+        // Alpha is always opaque.
+        assert_eq!(rgba[3], 1.0);
+        // All channels within [0,1].
+        assert!(rgba.iter().all(|c| (0.0..=1.0).contains(c)));
+    }
+
+    #[test]
+    fn color_is_deterministic() {
+        let view = StateView::tick_only(37);
+        let a = tick_color(&view).unwrap();
+        let b = tick_color(&view).unwrap();
+        // Two identical inputs -> bit-identical outputs (the whole point).
+        let rgba_a = a.clear_color().unwrap();
+        let rgba_b = b.clear_color().unwrap();
+        assert_eq!(rgba_a, rgba_b);
+    }
+
+    #[test]
+    fn rgb_waves_never_exceed_bounds() {
+        for tick in 0..2000 {
+            let [r, g, b] = rgb_for_tick(tick);
+            assert!(r <= 255 && g <= 255 && b <= 255);
+        }
+    }
+
+    #[test]
+    fn emits_only_deferred_clear() {
+        let view = StateView::tick_only(1);
+        let delta = tick_color(&view).unwrap();
+        assert!(delta.spawns.is_empty());
+        assert!(delta.despawns.is_empty());
+        assert!(delta.writes.is_empty());
+        assert!(matches!(
+            delta.deferred.first(),
+            Some(DeferredCommand::ClearColor { .. })
+        ));
+    }
 }

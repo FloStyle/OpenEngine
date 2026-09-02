@@ -24,9 +24,9 @@
 
 #![deny(missing_docs)]
 
-/// Multithreaded job system over the Rayon pool.
 pub mod jobs {
-    //! Job graph: builds the tick pipeline (pure-system fan-out + delta merge).
+    //! Job graph: builds the tick pipeline (pure-system fan-out + delta merge)
+    //! over the Rayon pool.
 
     /// Runs a closure on the shared rayon pool. Skeleton; the real scheduler
     /// (with determinism-aware priorities) arrives in the Job System milestone.
@@ -34,11 +34,10 @@ pub mod jobs {
     where
         F: FnOnce() + Send + 'static,
     {
-        let _ = rayon::spawn(f);
+        rayon::spawn(f);
     }
 }
 
-/// wgpu (Vulkan-preferred) renderer facade. Skeleton only.
 pub mod renderer {
     //! GPU output. Holds the `wgpu::Instance`/`Device`, the swapchain, and the
     //! draw dispatcher. No implementation yet — declared here so Domain A has a
@@ -56,7 +55,6 @@ pub mod renderer {
     }
 }
 
-/// wasmtime sandbox host. Skeleton only.
 pub mod sandbox {
     //! Instantiates `logic-sandbox` Wasm modules and drives their pure systems.
     //!
@@ -74,7 +72,6 @@ pub mod sandbox {
     }
 }
 
-/// winit window + event pump glue. Skeleton only.
 pub mod platform {
     //! `winit` event-loop integration. No implementation yet.
 
@@ -85,5 +82,5 @@ pub mod platform {
 /// Cross-crate ABI handshake used by tests and CI. The host refuses to boot on
 /// a mismatch between the linked `ARCH_VERSION` and the current ABI constant.
 pub fn abi_is_current() -> bool {
-    openengine_contracts::ARCH_VERSION == 1
+    openengine_contracts::ARCH_VERSION == 2
 }

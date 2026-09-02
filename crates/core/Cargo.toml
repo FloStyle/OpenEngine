@@ -12,7 +12,8 @@ winit.workspace = true
 wasmtime.workspace = true
 rayon.workspace = true
 openengine-contracts = { workspace = true }
-openengine-ecs = { path = "../ecs" }
+pollster.workspace = true
+anyhow.workspace = true
 
 [lints]
 workspace = true
