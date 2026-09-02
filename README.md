@@ -1,8 +1,8 @@
 # OpenEngine
 
 **AI-native Rust + Wasm game engine.** Built and maintained by multiple
-autonomous AI agents (DeepSeek, Cursor, Codex, GitHub Copilot) without context
-loss or architectural drift.
+autonomous AI agents without context loss or architectural drift. Agent
+governance lives in [`AGENTS.md`](AGENTS.md) and `.agents/`.
 
 ## Architectural pillars
 

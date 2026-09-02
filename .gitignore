@@ -16,8 +16,15 @@ __pycache__/
 .idea/
 .vscode/
 *.swp
+*.swo
 .DS_Store
 Thumbs.db
+
+# --- Secrets / local env ---
+.env
+.env.*
+*.log
+*.pem
 
 # --- AI session scratch (governance never commits its own telemetry) ---
 .ai/sessions/*.jsonl

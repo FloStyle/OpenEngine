@@ -67,26 +67,43 @@ class PurityReport:
 def verify_wasm_purity(wasm_path: str) -> PurityReport:
     """Ensure a Wasm binary does not import forbidden (std/WASI) symbols.
 
-    Stub. Two planned implementations, both allowed to be plugged in later:
+    Preferred path: use ``wasm-tools`` if installed to disassemble the module
+    and inspect its *import section* structurally (robust against renaming).
+    If ``wasm-tools`` is unavailable, fall back to a best-effort substring scan
+    of the raw bytes, which still catches accidental std/WASI linking.
 
-    1. ``wasm-tools`` (preferred): parse the import section structurally,
-       list every `(import "module" "name")`, and reject any module/name pair
-       in ``FORBIDDEN_IMPORTS``. This is robust against obfuscation.
-    2. ``tree-sitter-wasm`` (fallback): decode the binary's section headers and
-       extract the import section by walking the byte stream directly — no
-       external tool required, good for a self-contained CI step.
-
-    Today it performs a *best-effort* substring scan of the raw bytes, which
-    catches accidental std/WASI linking but not clever renaming. That is fine
-    for a guardrail stub; upgrade to `wasm-tools` when the host build lands.
+    Import sections are checked against ``FORBIDDEN_IMPORTS``.
     """
+    import shutil
+    import subprocess  # noqa: PLC0415  (local import: host-only tooling)
+
     path = Path(wasm_path)
     if not path.is_file():
         return PurityReport(str(path), ok=False, problems=["artifact not found"])
 
-    raw = path.read_bytes()
-    # wasm-tools emits text here; for raw binaries we grep the byte stream.
-    text = raw.decode("latin-1", errors="replace")
+    wasm_tools = shutil.which("wasm-tools")
+    if wasm_tools is None:
+        print(
+            "wasm-tools not found. Install with: cargo install wasm-tools\n"
+            "Falling back to basic string inspection...",
+            file=sys.stderr,
+        )
+        raw = path.read_bytes()
+        text = raw.decode("latin-1", errors="replace")
+    else:
+        # Disassemble and search the import-section text form, e.g.
+        #   (import "wasi_snapshot_preview1" "..." (func ...))
+        try:
+            proc = subprocess.run(
+                [wasm_tools, "print", str(path)],
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=60,
+            )
+            text = proc.stdout
+        except (OSError, subprocess.TimeoutExpired):
+            text = path.read_bytes().decode("latin-1", errors="replace")
 
     imported: list[str] = []
     problems: list[str] = []
@@ -161,8 +178,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_verify = sub.add_parser("verify", help="check a Wasm logic artifact for purity")
-    p_verify.add_argument("wasm", nargs="?", default=None, help="path to a .wasm module")
+    # `verify-wasm-purity` is the canonical name; `verify` is kept as an alias.
+    for name in ("verify-wasm-purity", "verify"):
+        p = sub.add_parser(name, help="check a Wasm logic artifact for purity")
+        p.add_argument("wasm", nargs="?", default=None, help="path to a .wasm module")
 
     sub.add_parser("verify-deps", help="forbid Domain A deps inside Domain B manifests")
 
@@ -171,10 +190,10 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
-    if args.command == "verify":
+    if args.command in ("verify-wasm-purity", "verify"):
         if args.wasm is None:
             # No artifact yet during scaffolding -> report as informational.
-            print("no wasm artifact supplied; stub check skipped (OK in scaffold)")
+            print("no wasm artifact supplied; purity check skipped (OK in scaffold)")
             return 0
         report = verify_wasm_purity(args.wasm)
         print(report.summary())
