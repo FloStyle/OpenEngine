@@ -194,3 +194,51 @@ A change is *done* only when **all** hold:
 ---
 
 *Reviewed: ABI v2 — Phase 3 (ECS Memory Bridging) underway.*
+
+---
+
+## Canonical definitions (post-audit)
+
+These authoritative definitions resolve cross-spec drift flagged by
+`docs/audit/audit-report-phase3.md`. Where a spec contradicts them, this section
+wins.
+
+### Time
+- **`sim_time`** — deterministic simulation time (fixed timestep, tick-driven,
+  Domain B). The only time gameplay logic may use.
+- **`wall_clock`** — real elapsed time (Domain A: profiling, UI, timers only).
+  **Domain B MUST use `sim_time`; wall clock is forbidden in gameplay logic.**
+- `StateView` carries `tick: u64`. Any fractional time crossing to Domain B is
+  injected as `I16F16` under an `ARCH_VERSION` bump, never `f64`.
+
+### Frame budget (master)
+- Fixed update ≤ 8 ms · Render ≤ 8 ms · Editor/overlay ≤ 4 ms (non-blocking).
+- Total frame ≤ 16.67 ms. No single subsystem exceeds its slice (spec 00, 13, 15).
+
+### Single mutation channel
+- **All** world mutation — gameplay or editor — flows through `WorldDelta`
+  (guest) or a spec-23 `Command` → `WorldDelta` → `apply_delta` (editor). There
+  is **no** second channel: no `QueryMut` write path for tools, no direct ECS
+  write from UI/inspector/gizmos. Editor mutations target the **edit world**
+  only (spec 22); `play_world` is read-only for the editor.
+
+### Error model
+- Domain B / recoverable: `RecoverableError` (logged, continue).
+- Unrecoverable: `FatalError` (rollback, else controlled abort). Guest reports
+  only `RecoverableError`; a guest `FatalError` is a hard trap.
+- Host typed wrappers are allowed as **only** two names: `EditorError`
+  (edit/UI/commands) and `SceneError` (scene load/codec). No other host error
+  synonyms (`EditorEditError`, `ModeError`, …).
+
+### Canonical ABI helper types (`contracts`, ARCH v2 addendum)
+- `AssetRef { id: u64, kind: u8 }` + `AssetKind` — the **only** asset reference.
+  No raw asset paths/strings, no `AssetHandle`/`AssetRefLike`/`FixedStringLike`.
+- `FixedString<const N>` — pod-safe fixed string.
+- `AudioHandle(u64)`, `NetState { tick:u64, player_id:u32, input_hash:u64 }`.
+- `ViewMode { Wireframe|Solid|Textured|Lit }` — one enum for the editor viewport.
+
+### Component registry
+- Every component is registered in spec 21 before use. Engine band 10–1023,
+  game ≥ 1024; each subsystem appends inside its reserved window and updates the
+  spec-21 table. Every component carries a `layout_version` (bump on any
+  `#[repr(C)]` change) used by the spec-16 codec for migration.

@@ -50,6 +50,166 @@ use core::fmt;
 pub const ARCH_VERSION: u32 = 2;
 
 // ────────────────────────────────────────────────────────────────────────────
+// § 0.1 ABI helper types (additive — see docs/abi/CHANGES.md "v2 addendum").
+//       Added for full-engine feature parity (specs 14-16, 24, 46-47).
+//       All additions below are additive: no existing layout changed, so
+//       ARCH_VERSION is NOT bumped for these.
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Per-component schema revision, used by the world/scene codec (spec 16) to
+/// migrate component-local layout drift that a global `ARCH_VERSION` cannot
+/// describe. Bump per component on any `#[repr(C)]` field change.
+pub const COMPONENT_LAYOUT_VERSION: u32 = 1;
+
+/// Kind of a referenced asset (Domain A loads; Domain B only holds the id).
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum AssetKind {
+    Texture = 0,
+    Mesh = 1,
+    Audio = 2,
+    Shader = 3,
+    Font = 4,
+    Scene = 5,
+}
+
+impl AssetKind {
+    /// Stable discriminant (pod-safe storage form).
+    #[inline]
+    pub const fn to_u8(self) -> u8 {
+        self as u8
+    }
+    /// Recover a kind from its stable discriminant.
+    #[inline]
+    pub fn from_u8(v: u8) -> Option<Self> {
+        Some(match v {
+            0 => Self::Texture,
+            1 => Self::Mesh,
+            2 => Self::Audio,
+            3 => Self::Shader,
+            4 => Self::Font,
+            5 => Self::Scene,
+            _ => return None,
+        })
+    }
+}
+
+/// A logical, portable reference to an asset. IDs are resolved by Domain A
+/// against `OPENENGINE_ASSETS_PATH`; never an absolute/hardcoded path.
+///
+/// The `kind` is stored as its stable `u8` discriminant; use [`AssetRef::kind`]
+/// for the [`AssetKind`]. (Not `Pod` yet: the current layout has trailing
+/// padding. When it must live inside a `Pod` SoA column, add an explicit
+/// `_pad: [u8;7]` field so bytemuck accepts it under `forbid(unsafe_code)`.)
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+pub struct AssetRef {
+    /// Stable asset id assigned by the Domain-A asset registry.
+    pub id: u64,
+    /// [`AssetKind`] discriminant (`AssetKind::to_u8`).
+    pub kind: u8,
+}
+
+impl AssetRef {
+    /// Construct from a logical asset kind.
+    pub const fn new(id: u64, kind: AssetKind) -> Self {
+        AssetRef { id, kind: kind.to_u8() }
+    }
+    /// The resolved asset kind (returns `AssetKind::Scene` fallback for an
+    /// unknown raw discriminant — unknown kinds are host-logged, never lost).
+    pub fn kind(&self) -> AssetKind {
+        AssetKind::from_u8(self.kind).unwrap_or(AssetKind::Scene)
+    }
+    /// An "unset" asset reference (no id, `Texture` placeholder kind).
+    pub const NONE: AssetRef = AssetRef { id: 0, kind: 0 };
+}
+
+/// An opaque handle to a loaded audio voice/stream (spec 14). Domain A plays;
+/// Domain B only ever holds this id.
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, bytemuck::Pod, bytemuck::Zeroable, serde::Serialize, serde::Deserialize)]
+pub struct AudioHandle(pub u64);
+
+/// Minimal deterministic network/rollback state carried across the wire
+/// (spec 15). Widths match `StateView.tick` (u64). (Not `Pod`: see the padding
+/// note on [`AssetRef`].)
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+pub struct NetState {
+    /// Simulation tick this state belongs to (matches `StateView::tick` width).
+    pub tick: u64,
+    /// Authoritative player that produced this input.
+    pub player_id: u32,
+    /// Hash of the batched inputs (determinism/desync detection).
+    pub input_hash: u64,
+}
+
+/// A fixed-capacity, pod-safe string for component fields that must stay
+/// `#![no_std]`/pod-representable (specs 21, 46, 47). Truncates on overflow;
+/// `len` is the number of valid leading bytes in `bytes`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FixedString<const N: usize> {
+    pub bytes: [u8; N],
+    pub len: u32,
+}
+
+impl<const N: usize> FixedString<N> {
+    pub const EMPTY: Self = FixedString { bytes: [0; N], len: 0 };
+
+    /// Build from a `&str`, truncating to `N` bytes if needed.
+    pub fn new(s: &str) -> Self {
+        let src = s.as_bytes();
+        let n = core::cmp::min(src.len(), N);
+        let mut bytes = [0u8; N];
+        bytes[..n].copy_from_slice(&src[..n]);
+        FixedString { bytes, len: n as u32 }
+    }
+    /// The contained string (UTF-8 prefix by construction from [`FixedString::new`]).
+    pub fn as_str(&self) -> alloc::string::String {
+        alloc::string::String::from_utf8_lossy(&self.bytes[..self.len as usize]).into_owned()
+    }
+}
+
+// serde can't derive array deserialization for arbitrary const N, so encode
+// the string form manually (canonical, `#![no_std]`-safe).
+impl<const N: usize> serde::Serialize for FixedString<N> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.as_str())
+    }
+}
+
+impl<'de, const N: usize> serde::Deserialize<'de> for FixedString<N> {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V<const K: usize>;
+        impl<'de, const K: usize> serde::de::Visitor<'de> for V<K> {
+            type Value = FixedString<K>;
+            fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                write!(f, "a string")
+            }
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                Ok(FixedString::new(v))
+            }
+            fn visit_string<E: serde::de::Error>(self, v: alloc::string::String) -> Result<Self::Value, E> {
+                Ok(FixedString::new(&v))
+            }
+        }
+        d.deserialize_str(V::<N>)
+    }
+}
+
+/// Editor viewport display mode (canonical across specs 04/24/25).
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ViewMode {
+    Wireframe = 0,
+    Solid = 1,
+    Textured = 2,
+    Lit = 3,
+}
+
+
+// ────────────────────────────────────────────────────────────────────────────
 // § 0. Handles & identifiers
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -193,6 +353,38 @@ impl fmt::Display for RecoverableError {
 
 // `core::error::Error` is stable (Rust ≥ 1.81). No std needed.
 impl core::error::Error for RecoverableError {}
+
+/// An **unrecoverable** engine error (Domain A mostly). Triggers rollback of the
+/// offending transaction and, if it repeats, a controlled abort — never a
+/// silent continue. Domain B pure systems should report only [`RecoverableError`];
+/// a `FatalError` from the guest is treated as a hard trap.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[repr(C)]
+pub struct FatalError {
+    /// Stable machine-readable code (see [`code`] for shared values).
+    pub code: u32,
+    /// Human/agent-readable detail.
+    pub message: Option<alloc::string::String>,
+}
+
+impl FatalError {
+    pub const fn numeric(code: u32) -> Self {
+        FatalError { code, message: None }
+    }
+    pub fn detailed(code: u32, message: impl Into<alloc::string::String>) -> Self {
+        FatalError { code, message: Some(message.into()) }
+    }
+}
+
+impl core::fmt::Display for FatalError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match &self.message {
+            Some(m) => write!(f, "OpenEngine fatal 0x{:04X}: {m}", self.code),
+            None => write!(f, "OpenEngine fatal 0x{:04X}", self.code),
+        }
+    }
+}
+impl core::error::Error for FatalError {}
 
 // ────────────────────────────────────────────────────────────────────────────
 // § 1. SoA layout descriptors (the "read" side)

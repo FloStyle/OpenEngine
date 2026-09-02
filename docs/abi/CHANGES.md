@@ -3,6 +3,19 @@
 Rule: every entry records *who*, *what*, *why*, and a bumped `ARCH_VERSION`.
 `ARCH_VERSION` never goes backwards.
 
+## v2 addendum — additive ABI helper types (non-breaking)
+
+Added for full-engine feature parity (specs 14–16, 24, 46–47). Purely additive —
+no existing layout/type changed, so `ARCH_VERSION` stays `2` (the ABI wall for
+already-shipped logic modules is intact).
+
+- `COMPONENT_LAYOUT_VERSION: u32` + per-component schema-versioning contract (spec 16).
+- `AssetKind` + `AssetRef { id: u64, kind: u8 }` (canonical logical asset ref; specs 21/46/47).
+- `AudioHandle(u64)` (spec 14) and `NetState { tick:u64, player_id:u32, input_hash:u64 }` (spec 15).
+- `FixedString<const N: usize>` (pod-safe fixed string; specs 21/46/47).
+- `ViewMode` (canonical editor viewport mode; specs 04/24/25).
+- `FatalError` (unrecoverable host error; complements `RecoverableError`).
+
 ## v2 — minimal vertical slice ("the living window")
 
 - Added `StateView::tick: u64` (host frame counter; the guest input before ECS
