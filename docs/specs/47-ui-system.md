@@ -192,7 +192,7 @@ same component data the shipping game uses.
 //! Domain B: pure, no_std, fixed-point. Renderer lives in Domain A.
 #![forbid(unsafe_code)]
 
-use contracts::{ComponentId, Entity, WorldDelta};
+use contracts::{AssetRef, ComponentId, Entity, FixedString, WorldDelta};
 use openengine_math::I16F16;
 
 /// Registry bindings for the UI band (frozen, spec 21 registry).
@@ -239,8 +239,8 @@ pub struct UIElement {
          serde::Serialize, serde::Deserialize, Debug)]
 pub struct UIText {
     pub element: Entity,         // owning UIElement node
-    pub text: FixedStringLike,   // fixed inline string (label, spec 21 discipline)
-    pub font: AssetRefLike,      // logical font asset ref (32 B, no abs path)
+    pub text: FixedString<24>,   // fixed inline string (contracts FixedString<N>)
+    pub font: AssetRef,          // contracts::AssetRef (AssetKind::Font)
     pub size: I16F16,            // glyph size in canvas units
     pub color: [u8; 4],          // RGBA
     pub align_h: u8, align_v: u8,// horizontal/vertical alignment
@@ -350,8 +350,9 @@ IDs in this pass.
   are columns; Domain B writes them. Gameplay never draws.
 - **Authoring is edit-world + spec-23 commands.** Layout/text/hierarchy edits are
   undoable commands; preview runs on the play world (spec `22`).
-- **Reuse over invention.** Parenting uses `Parent`(4); asset/font refs are
-  logical tokens (no absolute paths, AGENTS.md § 5); rendering reuses the spec-04
+- **Reuse over invention.** Parenting uses `Parent`(4); asset/font refs are the
+  canonical `contracts::AssetRef` (no absolute paths, AGENTS.md § 5); strings are
+  `contracts::FixedString<N>`; rendering reuses the spec-04
   batch/emission boundary and quantizes fixed→f32 there.
 - **Headless-clean.** Layout/hit-test/state systems run with no GPU/window; only
   the actual quad/SDF raster is Domain-A/device-gated. Portability

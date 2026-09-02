@@ -186,22 +186,28 @@ mutations:
 
 ```rust
 pub struct Toolbar {
-    pub mode: EditMode,                 // Edit | Play (drives the toolbar state)
+    pub mode: EditorMode,               // spec 22: Edit | Playing | Paused
     pub transform: TransformMode,       // Translate | Rotate | Scale
     pub snap_enabled: bool,
     pub snap_step: I16F16,              // world-space snap grid (fixed-point)
-    pub view_mode: ViewMode,            // e.g. Shaded | Wireframe | Unlit
+    pub view_mode: ViewMode,            // canonical contracts::ViewMode
 }
 
-pub enum EditMode { Edit, Play }        // Play pauses live edit; runs the sim
+// The shell's mode is spec 22's ONE editor-mode enum: EditorMode { Edit |
+// Playing | Paused }. Paused (play world frozen, read-only / stepping) is a
+// first-class shell state — not collapsed into Edit/Play.
 pub enum TransformMode { Translate, Rotate, Scale }
-pub enum ViewMode { Shaded, Wireframe, Unlit }
+// ViewMode is the canonical contracts::ViewMode { Wireframe | Solid |
+// Textured | Lit }, shared verbatim with specs 04 and 24.
 ```
 
 Toolbar buttons (all with tooltips):
 
-- **Play / Pause / Stop** (toggle `EditMode`). Pause holds the sim; Stop returns
-  to Edit and rolls back edits made while playing through spec `23` undo.
+- **Play / Pause / Stop** transition spec-`22` `EditorMode`
+  (`Edit→Playing`, `Playing→Paused`, and `Playing`/`Paused→Edit`). Pause freezes
+  the play world for read-only inspection/stepping; Stop exits to Edit. The edit
+  world is never mutated while Playing/Paused (spec `22`), so Stop restores it
+  unchanged and adds no undo entries.
 - **Undo / Redo** (spec `23`) — enabled only when the undo stack is non-empty;
   clicking stages an `UndoCommand`/`RedoCommand`.
 - **Transform mode** — Translate / Rotate / Scale, shown as W / E / R badges
@@ -228,12 +234,12 @@ pub struct StatusBar {
     pub fps: f32,                // moving average, display-only
     pub entity_count: usize,     // == view.live_entity_count()
     pub selection_count: usize,  // == SelectionModel.current selection size
-    pub mode: EditMode,
+    pub mode: EditorMode,        // spec 22: Edit | Playing | Paused
     pub memory: usize,           // resident set or arena bytes, best-effort
 }
 ```
 
-The four pieces shown left-to-right: **mode** (Edit/Play), **selection count**,
+The four pieces shown left-to-right: **mode** (Edit/Playing/Paused, spec 22), **selection count**,
 **entity count**, then a right-aligned cluster **FPS + memory**. Selection count
 comes from the shared `SelectionModel` (spec `07`/`08`); entity count from a
 single linear count over the `WorldView` (O(1) if the ECS keeps a live counter,
@@ -347,13 +353,13 @@ pub enum PanelContent { Viewport, Hierarchy, Inspector, AssetBrowser,
     Console, Custom(String) }
 pub enum SplitDir { Horizontal, Vertical }
 pub enum SnapKind { Left, Right, Top, Bottom, Center, TabStrip }
-pub enum EditMode { Edit, Play }
+pub enum EditorMode { Edit, Playing, Paused }   // spec 22 — shared editor mode
 pub enum TransformMode { Translate, Rotate, Scale }
-pub enum ViewMode { Shaded, Wireframe, Unlit }
-pub struct Toolbar { pub mode: EditMode, pub transform: TransformMode,
+// ViewMode is canonical contracts::ViewMode { Wireframe | Solid | Textured | Lit }
+pub struct Toolbar { pub mode: EditorMode, pub transform: TransformMode,
     pub snap_enabled: bool, pub snap_step: I16F16, pub view_mode: ViewMode }
 pub struct StatusBar { pub fps: f32, pub entity_count: usize,
-    pub selection_count: usize, pub mode: EditMode, pub memory: usize }
+    pub selection_count: usize, pub mode: EditorMode, pub memory: usize }
 pub enum ShellCommand { Play, Pause, Stop, Undo, Redo,
     SetTransform(TransformMode), SetSnap(bool, I16F16), SetViewMode(ViewMode),
     SaveLayout, LoadLayout(String), ResetLayout }
@@ -421,7 +427,8 @@ for the fixed-point snap grid.
   paint closure and the busy guard fires if a flush is attempted mid-iteration.
 - **Integration:** drive the shell with a synthetic `WorldView` of N entities;
   assert status-bar entity/selection counts match the view and that switching
-  Edit↔Play only toggles the toolbar state (no world writes).
+  Edit↔Playing (incl. the Paused state, spec `22`) only toggles the toolbar state
+  (no world writes).
 
 ## Dependencies
 

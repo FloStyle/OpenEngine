@@ -38,10 +38,11 @@ pub struct Transform {
     pub scale:       Vec3Fx,      // fixed-point
 }
 
-/// Reference to a host asset (see 02-asset-pipeline.md). Opaque u64 handle.
+/// Reference to a host asset (see 02-asset-pipeline.md). Uses the canonical
+/// `contracts::AssetRef { id, kind }` (kind = `AssetKind`); never a raw path.
 pub struct MeshRenderer {
-    pub mesh:  AssetHandle<Mesh>,      // host-side opaque handle
-    pub material: AssetHandle<Material>,
+    pub mesh:  AssetRef,          // `AssetKind::Mesh`
+    pub material: AssetRef,       // material/template asset (kind per AssetKind)
     pub visible: bool,
 }
 
@@ -76,8 +77,8 @@ pub enum RenderCommand {
     SetClearColor { rgba: [f32; 4] }, // ABI emission of fixed clear color
     DrawMesh {
         entity: Entity,
-        mesh:   AssetHandle<Mesh>,
-        material: AssetHandle<Material>,
+        mesh:   AssetRef,              // AssetKind::Mesh
+        material: AssetRef,            // material/template asset (kind per AssetKind)
         transform: Mat4Fx,           // object -> world, still fixed
     },
     // later (aspirational): BeginGbuffer / SetAlbedo / SetNormal / ... 
@@ -88,6 +89,14 @@ pub enum RenderCommand {
 The list is produced in a canonical order (sorted by material → depth → entity
 handle) so batching is stable and reproducible. Domain A builds view/projection
 matrices *from the fixed camera values*, quantizing only at the boundary.
+
+### View modes (canonical)
+
+The editor viewport picks a per-viewport render *style* from the **one** canonical
+enum `contracts::ViewMode { Wireframe | Solid | Textured | Lit }`, shared verbatim
+across specs 04 / 24 / 25. Each variant selects a shader/pipeline variant applied
+to the same command list; the forward path below is the `Lit` default (spec 04).
+No spec defines its own `ViewMode`.
 
 ### Camera view / projection (Domain A, from fixed values)
 
@@ -134,22 +143,22 @@ pub struct Vertex {
 The vertex format is **`f32`** — meshes are pre-authored art data (from the asset
 pipeline), not gameplay math, so `f32` here is correct and standard for the GPU.
 Meshes are uploaded by the asset pipeline (`02-asset-pipeline.md`) and referenced
-only by opaque handles.
+only by their canonical `AssetRef` (kind `AssetKind::Mesh`).
 
 ### Material + MaterialTemplate
 
 ```rust
 /// A concrete, bindable material instance.
 pub struct Material {
-    pub template: AssetHandle<MaterialTemplate>,
-    pub albedo:      AssetHandle<Texture>,
-    pub normal_map:  Option<AssetHandle<Texture>>,
-    pub uniforms:    Vec<u8>,          // serially-packed uniform block (f32 at GPU)
+    pub template: AssetRef,      // material-template asset (kind per AssetKind)
+    pub albedo:      AssetRef,   // AssetKind::Texture
+    pub normal_map:  Option<AssetRef>, // AssetKind::Texture
+    pub uniforms:    Vec<u8>,    // serially-packed uniform block (f32 at GPU)
 }
 
 /// The reusable definition: which shader + which bind-group slots + defaults.
 pub struct MaterialTemplate {
-    pub shader: AssetHandle<Shader>,     // WGSL module
+    pub shader: AssetRef,        // AssetKind::Shader (WGSL module)
     pub bind_layout: BindGroupLayout,
     pub default_params: MaterialParams,  // base color, metallic, roughness, ...
 }

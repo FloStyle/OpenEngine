@@ -141,8 +141,10 @@ headlessly, independent of the wgpu upload.
 Picking selects an entity by casting a mouse ray into the scene and testing
 against **axis-aligned bounding boxes (AABBs)**, not against triangle meshes —
 ray vs. every mesh triangle is far too expensive at scene scale and is not
-needed for editor selection. The AABB source is the component set's bounding
-box (spec `21` primitive components / mesh bounds), read from the `WorldView`.
+needed for editor selection. The AABB source is the **registered `Bounds`
+component (spec `21`, ComponentId **71**)**, read from the edit world's
+`WorldView`: picking is a ray-vs-`Bounds`-AABB test against each candidate
+entity.
 
 ```rust
 pub struct Ray { pub origin: glam::Vec3, pub dir: glam::Vec3 }
@@ -168,9 +170,8 @@ Selection interaction:
   a screen rectangle and selects all entities whose projected AABB intersects it.
 
 Picking is a pure function of the world-space AABBs + the camera, so it is fully
-headless-testable. Entity bounds live in the edit world as bounds components
-(spec `21`) or are computed from cached mesh bounds; the viewport never raymarches
-GPU meshes.
+headless-testable. Entity bounds live in the edit world as registered `Bounds`
+components (spec `21`, ComponentId 71); the viewport never raymarches GPU meshes.
 
 ### Multi-viewport
 
@@ -202,16 +203,15 @@ pub enum ViewportLayout { Perspective, Top, Front, Side }
 
 ### View modes
 
-Per-viewport rendering of the scene's geometry:
+Per-viewport rendering of the scene's geometry. The viewport uses the **one**
+canonical enum `contracts::ViewMode { Wireframe | Solid | Textured | Lit }`
+shared verbatim with specs 04 and 25 (`Lit` is the spec-04 default); no local
+`ViewMode` is defined here:
 
 ```rust
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ViewMode {
-    Wireframe,      // edges only — cheapest correctness view
-    Solid,          // unlit flat/solid surfaces
-    Textured,       // unlit base color / texture
-    Lit,            // full forward lighting (spec 04 default)
-}
+// contracts::ViewMode — canonical across specs 04/24/25.
+// Variants: Wireframe (edges only) | Solid (unlit) | Textured (base color/tex) |
+//           Lit (full forward lighting, spec 04 default).
 ```
 
 Each mode is a render *style* applied to the same scene command list; switching
@@ -240,7 +240,7 @@ not pixels.
   `crates/editor`.
 - `EditorCamera`, `ProjectionMode` — `crates/editor` (Domain A camera math).
 - `GridSettings`, `GridFrame` (bounded line list) — `crates/editor`.
-- `ViewMode` — `crates/editor`.
+- `ViewMode` — the canonical `contracts::ViewMode` (shared with specs 04/25).
 - `Ray`, `BoundsAabb`, `ray_intersects_aabb`, `ray_from_viewport` —
   `crates/editor` geometry helpers.
 - `SelectionModel` — shared with specs `07`/`08`/`23` (selection lives here,
@@ -249,7 +249,8 @@ not pixels.
   selection-driven UI (e.g. `Del` to despawn) go through `UndoRedoManager`
   commands (spec `23`) and flush as `WorldDelta` at the boundary.
 - Reads: `WorldView<'a>` (safe immutable SoA read, spec `07`) for positions,
-  bounds (spec `21`), parent relations (spec `08`).
+  the registered `Bounds` component (spec `21`, ComponentId 71), parent
+  relations (spec `08`).
 
 ## Constraints
 
@@ -289,8 +290,8 @@ not pixels.
 
 - Camera navigation (orbit/pan/dolly update): **< 0.1 ms** per input event.
 - Picking: build ray + test ~N candidate AABBs. Target **< 1 ms** for up to
-  10 000 candidate entities; a spatial BVH/index over bounds (spec `21`) keeps it
-  sub-ms as scenes grow.
+  10 000 candidate entities; a spatial BVH/index over `Bounds` (spec `21`,
+  ComponentId 71) keeps it sub-ms as scenes grow.
 - Grid vertex generation for the visible extent: **< 0.5 ms**, generated only
   when camera extent changes (cached otherwise).
 - Composite overlay command-list build (selection outlines + gizmo frame, spec
@@ -338,8 +339,8 @@ All headless (no GPU / no window) in `crates/editor` / `crates/core` unit tests:
   selection; egui for the panel/chrome.
 - `crates/core` (Domain A) — composite render targets, wgpu submit path.
 - Render pipeline from spec `04` (game render + view modes); gizmo overlay and
-  debug-channel compositing from spec `09`; bounds/AABB source from spec `21`
-  (primitive components / mesh bounds).
+  debug-channel compositing from spec `09`; the registered `Bounds` component
+  (spec `21`, ComponentId 71) as the ray-vs-AABB picking source.
 - `SelectionModel`/`WorldView`/`EditorError` shared with specs `07`/`08`.
 - Undo/redo path from spec `23` for all structural edits the viewport initiates.
 - Edit-vs-play split from spec `22`.

@@ -194,7 +194,7 @@ play world.
 //! Storage layouts also live in crates/ecs/src/components.rs for Domain A.
 #![forbid(unsafe_code)]
 
-use contracts::{ComponentId, Entity, RenderKind, WorldDelta};
+use contracts::{AssetRef, ComponentId, Entity, RenderKind, WorldDelta};
 use openengine_math::I16F16;
 
 /// Registry bindings for the cinematic band (frozen, see spec 21 registry).
@@ -232,7 +232,7 @@ pub struct SequenceTrack {
     pub target: Entity,            // driven entity (e.g. Hero / camera rig)
     pub kind: TrackKind,           // 1 byte
     pub weight: I16F16,            // lane blend weight 0..=1 (fixed) for mixing
-    pub asset: AssetRefLike,       // opaque ref for Animation/Audio (32 B)
+    pub asset: AssetRef,           // contracts::AssetRef for Audio/Animation tracks
     pub mute: u8,                  // 0/1 per-lane editor mute
     pub _reserved: [u8; 3],        // pad → multiple of 4
 }
@@ -246,32 +246,25 @@ pub struct SequenceKeyframe {
     pub track: Entity,             // owning SequenceTrack (also Parent edge)
     pub tick: u64,                 // tick offset within the sequence (0..=duration)
     pub interp: Interp,            // Constant / Linear / Smooth (1 byte)
-    pub value: KeyValue,           // fixed-size payload below
+    pub value: [I16F16; 4],        // typed sample payload (interpreted below)
     pub shot_boundary: u8,         // 0/1 marks a camera shot/cut start
     pub _pad: [u8; 2],
 }
-
-/// Fixed-size typed sample payload (never f32 in Domain B).
-#[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable,
-         serde::Serialize, serde::Deserialize, Debug)]
-pub union KeyValue {
-    pub position: [I16F16; 3],     // Transform.position
-    pub rotation: [I16F16; 4],     // Transform.rotation (quat, w last)
-    pub scale:    [I16F16; 3],
-    pub scalar:   I16F16,          // Animation weight / Audio volume / Event arg
-    pub u32_arg:  u32,             // Event topic / audio asset token etc.
-}
 ```
 
-> The `union` above expresses "one of several fixed payloads" compactly; if the
-> workspace prefers not to take `unsafe` even for layout mirrors, this spec
-> instead stores an explicit `value: [I16F16; 4]` + `kind_u8` and relies on the
-> track `kind` to reinterpret. The **serialized** form (spec `16` raw column
-> bytes + element_size) is identical either way; only the in-Rust cast differs.
-> Prefer the `[I16F16; 4]` array form unless an explicit
-> `#[allow(unsafe_code)]` layout-mirror module is RFC'd and reviewed
-> (AGENTS.md § 4).
+> **Safe payload, no `unsafe`.** Domain B is `forbid(unsafe_code)`, so the sample
+> payload is a plain `value: [I16F16; 4]` (a `union KeyValue` would need an
+> `unsafe` read — forbidden here). The four cells are reinterpreted by the owning
+> `SequenceTrack.kind` / `Interp`; unused cells are padded with `0`:
+>   - Transform tracks: position → `[tx, ty, tz, 0]`; rotation (quat, w last) →
+>     `[qx, qy, qz, qw]`. Position (3) and rotation (4) never share one `value`
+>     cell — they are **co-authored** as a position keyframe + a rotation
+>     keyframe pair at the same tick, each stored in its own row.
+>   - scale → `[sx, sy, sz, 0]`; Animation weight / Audio volume → `[v, 0, 0, 0]`;
+>     Event arg → an `I16F16` scalar cell (a `u32` topic that fits `I16F16` is
+>     stored as that scalar; a larger token is split across two cells).
+> The **serialized** form (spec `16` raw column bytes + element_size) is the same
+> as the union design; only the in-Rust view differs, and it stays 100% safe.
 
 ### Pure playback system
 

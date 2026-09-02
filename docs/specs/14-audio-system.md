@@ -15,8 +15,9 @@ collision from `13-physics-basics`, a gunshot, a one-shot footstep loop, an
 ambient bed — it emits a *deferred audio request* into its [`WorldDelta`].
 Domain A drains those requests and plays them through `rodio`/`cpal`.
 
-The design reuses the existing asset/handle story (`AudioHandle` borrows the
-`AssetHandle` discipline used for meshes in `contracts`), distinguishes one-shot
+The design reuses the canonical `contracts` asset/handle types (a sound asset is
+named by `contracts::AssetRef` with `AssetKind::Audio`; a live voice/stream is
+identified by `contracts::AudioHandle(u64)`), distinguishes one-shot
 from looping playback, carries volume/pan/3D position (converted **only at the
 Domain A boundary** from fixed-point), tracks a listener from the camera, and
 degrades gracefully when no audio device exists (audio becomes a silent no-op —
@@ -36,7 +37,7 @@ host a schema it can dispatch without peeking at a topic table.
 /// Domain B -> Domain A. Played by the host; never touched by Domain B.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct AudioRequest {
-    pub handle: AssetHandle,     // stable id of a loaded sound asset
+    pub handle: AssetRef,        // sound asset (contracts::AssetRef, AssetKind::Audio)
     pub kind: PlayKind,          // OneShot | Looping
     pub gain: I16F16,            // 0.0 ..= 1.0, fixed-point on the guest side
     pub pan: I16F16,             // -1.0 (L) ..= +1.0 (R); only for 2D pan
@@ -65,7 +66,7 @@ pub struct AudioEngine {
     // None when no device was found: every play becomes a silent no-op.
     device: Option<rodio::OutputStream>,
     mixer: Option<rodio::Sink>,          // master group
-    assets: AssetRegistry,               // AssetHandle -> decoded Source
+    assets: AssetRegistry,               // AssetRef (Audio kind) -> decoded Source
     ducked: Vec<DuckingGroup>,           // pool metadata
     listener_pos: Option<(f32, f32)>,    // camera, host side only
 }
@@ -88,18 +89,22 @@ impl AudioEngine {
 }
 ```
 
-### Handle reuse
+### Asset references and voice handles
 
-`AudioHandle`/`AssetHandle` follow the pattern of render mesh handles in
-`contracts`: a `u32` index into a host-owned asset registry plus a generation, or
-simply the stable `AssetId` the editor assigned. Domain B *names* a sound by this
-stable id; it never stores a decoder, a `Sink`, or a pointer to audio memory.
-Assets are loaded once by the host at scene load (see `16-serialization`), kept
-decoded (or as a streamable handle) in `AssetRegistry`, and referenced by id.
+A sound asset is named by the canonical `contracts::AssetRef { id, kind }`
+(`kind = AssetKind::Audio`) — the same single asset-reference model used for
+meshes; no raw paths and no ad-hoc `AssetHandle`. The host resolves the id
+against its `AssetRegistry` at scene load (see `16-serialization`) and keeps
+decoded sources (or streamable handles) keyed by asset id. Domain B *names* a
+sound by this `AssetRef`; it never stores a decoder, a `Sink`, or a pointer to
+audio memory. A live, playing **voice/stream** is identified by the other
+canonical handle `contracts::AudioHandle(u64)`, returned by the host when it
+spawns a voice and echoed back by gameplay to stop/retarget it.
 
 ```rust
-#[repr(transparent)]
-pub struct AssetHandle(pub u32); // index into host AssetRegistry
+// contracts — canonical types only:
+// AssetRef { id: u64, kind: AssetKind::Audio }  -> names the sound asset
+// AudioHandle(u64)                              -> names one live voice/stream
 ```
 
 ### One-shot vs looping
@@ -108,9 +113,9 @@ pub struct AssetHandle(pub u32); // index into host AssetRegistry
   it when the buffer finishes. Cost-controlled by a small cap on concurrent
   one-shots (oldest stopped first).
 - **Looping**: play a source repeatedly until an explicit `StopAudio { handle,
-  voice }` request or the entity is despawned. Loops are addressable by a
-  `voice: u64` returned conceptually by the host; gameplay stops a loop by
-  referencing the same `voice`.
+  voice }` request or the entity is despawned. Loops are addressable by the
+  canonical `contracts::AudioHandle(u64)` the host returns when it spawns the
+  voice; gameplay stops a loop by referencing the same `AudioHandle`.
 
 ```rust
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
@@ -119,8 +124,8 @@ pub enum PlayKind { OneShot, Looping }
 
 Volume and pan are requested per voice. Loops on a distance-attenuated source
 follow the entity's current `Position` column, so the host tracks a
-`voice -> Entity` map and re-applies gain each frame — gameplay just moves the
-entity and the host attenuates.
+`AudioHandle -> Entity` map and re-applies gain each frame — gameplay just moves
+the entity and the host attenuates.
 
 ### Listener (camera)
 
@@ -154,7 +159,8 @@ changes whether bytes reach speakers.
 
 - `AudioRequest`, `PlayKind`, `VoiceFlags`, `DuckGroup` — `serde` value types
   crossing in a `WorldDelta` (all fixed-point decision fields).
-- `AssetHandle(u32)` — stable id into host `AssetRegistry`.
+- `AssetRef` (`AssetKind::Audio`) — sound-asset reference; `AudioHandle(u64)` —
+  live voice/stream handle (both canonical `contracts` types).
 - Host `AudioEngine` (std) with `drain`, `play`, `stop`, `duck`, `set_listener`.
 - `I16F16 -> f32` conversion confined to `crates/audio` at the device boundary.
 
@@ -195,8 +201,8 @@ changes whether bytes reach speakers.
 
 - `rodio`, `cpal` (Domain A only, behind an optional feature so headless builds
   skip device init).
-- `contracts` (`WorldDelta`, `DeferredCommand`, `AssetHandle`/`AssetId`),
-  `openengine-math` for fixed→f32 at the boundary.
+- `contracts` (`WorldDelta`, `DeferredCommand`, `AssetRef`/`AssetKind`,
+  `AudioHandle`), `openengine-math` for fixed→f32 at the boundary.
 - Host: `crates/core`, `crates/audio`. No new Domain B dependency.
 
 ## Next steps
