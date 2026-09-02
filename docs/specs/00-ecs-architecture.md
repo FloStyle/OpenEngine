@@ -93,8 +93,13 @@ impl<'a, T: Component> Query<'a, T> {
     pub fn iter(&self) -> impl Iterator<Item = (&'a Entity, &'a T)> { /* ... */ }
 }
 ```
-A `QueryMut` mirrors this with `Vec<&'a mut [T]>` for host-side systems that may
-write directly (Domain A tools like the editor). Multi-component queries combine
+`QueryMut` (which would hand out `&mut [T]` to host-side systems) is **not** a
+valid write path for systems or the editor. All world mutation — gameplay or
+editorial — flows through the **single mutation channel**: a guest returns a
+`WorldDelta`, or an editor action becomes a spec-23 `Command` that yields a
+`WorldDelta`, both applied by `apply_delta`. Tools never receive raw `&mut`
+into ECS columns; a component that must be authored is read back with `&[T]`
+queries and written via a `ColumnWrite`. Multi-component read queries combine
 archetype matches:
 ```rust
 // all entities with Position AND Velocity
@@ -130,6 +135,11 @@ fn apply_delta(world: &mut World, delta: &WorldDelta) {
 - All components are `Pod + Zeroable`; columns byte-aligned.
 - Row indices stable within a frame.
 - Spawn/despawn are queued and applied after all systems run (`flush`).
+- **Single mutation channel.** No direct ECS mutation from any system, editor or
+  gameplay. Every write is a `WorldDelta` (produced by a guest system, or by a
+  spec-23 `Command` from the editor) applied through `apply_delta`. There is no
+  `QueryMut` write path for tools; inspector/hierarchy/gizmos target the edit
+  world only and go through spec-23 `Command`s.
 - Determinism: identical input tick + identical delta sequence ⇒ identical world.
 
 ## Performance targets
@@ -151,5 +161,5 @@ fn apply_delta(world: &mut World, delta: &WorldDelta) {
 1. `ArchetypeStorage`/`Column` in `crates/ecs`.
 2. `World` owning archetypes + component registry.
 3. spawn/despawn/add/remove + migration.
-4. `Query`/`QueryMut`/multi-component.
+4. `Query` read queries / multi-component (no `QueryMut` write path).
 5. `apply_delta`.

@@ -20,7 +20,8 @@ turned into a delta exactly like any other authoring action.
 Because the engine's determinism law forbids `f32` in *logic* math only,
 gizmo math — which is presentation + authoring and never runs in the pure
 sandbox — uses `glam` `f32` transforms against the render camera, then emits
-position updates snapped to fixed-point `openengine-math` types in the delta.
+`Transform` (3D) updates snapped to fixed-point `openengine-math` values in the
+delta.
 
 ## Core Concepts
 
@@ -86,12 +87,29 @@ the start to the current projected point is the drag vector.
 Gizmo edits do not write ECS memory directly. They return a [`WorldDelta`] —
 the *same* mutation channel Domain B uses — so the invariant "state changes flow
 one way: guest/host produce a delta, ECS applies it" is preserved even for
-editor authorship. The editor builds the delta from the selected entity's
-current fixed-point position plus the drag:
+editor authorship. The editor routes the resulting delta through
+`apply_delta(world, &delta)` so generation guards, column bounds checks and
+rollback-on-error all behave exactly as they do for gameplay.
+
+The gizmo targets the **`Transform`** component (**`ComponentId(2)`**, the 3D
+component in the spec-21 registry) — never `Position` (`ComponentId(0)`), which
+is the separate 2D pair. Because gizmos author 3D placement they mutate the 3D
+`Transform` column. `ColumnWrite.payload` must be a **whole-element write** of
+`indices.len() * element_size` bytes for that column — a bare `FxVec3`
+(translation only) cannot be written into a larger `Transform` row. The editor
+therefore performs a **full-row read-modify-write**: it reads the entity's
+current whole `Transform` (as a `&[u8]`/fixed-point row via a read query, spec
+00), applies the drag to the translation (and scale/rotation for those modes)
+inside that row, and emits the *complete* updated `Transform` row as the payload.
+(An alternative is a dedicated authored column holding just the gizmo-authored
+value, but the default is a full `Transform` read-modify-write.)
 
 ```rust
 // Fixed-point world math used to build the write payload.
 use openengine_math::{I16F16, FxVec3};
+use contracts::{ComponentId, ColumnWrite};
+
+const C_TRANSFORM: ComponentId = ComponentId(2);   // 3D Transform, spec-21 registry
 
 struct DragSession {
     entity: Entity,
@@ -108,32 +126,35 @@ impl DragSession {
     /// Produce the delta for this frame's mouse position (already resolved to
     /// a fixed-point point `p` on the drag plane by the editor).
     fn delta_to(&self, p: FxVec3) -> Option<WorldDelta> {
-        // Per-mode derivation of the *new* position for `entity`.
-        let new_pos = match self.mode {
-            GizmoMode::Translate => self.anchor_world + (p - self.start_world),
-            GizmoMode::Scale      => apply_scale(self, p),
-            GizmoMode::Rotate     => rotate_around(self, p),
+        // Per-mode derivation of the *new* transform for `entity`. `row` is the
+        // full current `Transform` element bytes (read via a read-only query),
+        // re-read each frame so the write is a whole-element read-modify-write.
+        let row = self.read_transform(&self.entity)?;         // full Transform element
+        let row = match self.mode {
+            GizmoMode::Translate => set_translation(row, self.anchor_world + (p - self.start_world)),
+            GizmoMode::Scale      => set_scale(row, apply_scale(self, p)),
+            GizmoMode::Rotate     => set_rotation(row, rotate_around(self, p)),
         };
-        let snapped = snap_to(self.snap, new_pos);
+        let row = snap_row(self.snap, row);
 
-        let component = components::POSITION;          // ComponentId in registry
         let archetype = self.entity_archetype;          // cached ArchetypeId
-        let payload = bytemuck::bytes_of(&snapped).to_vec();
+        let payload = row.to_bytes();                    // full element, == element_size
+        debug_assert_eq!(payload.len() as u32, transform_element_size());
         let mut delta = WorldDelta::default();
         delta.writes.push(ColumnWrite {
             archetype,
-            component,
+            component: C_TRANSFORM,                       // Transform (3D), NOT Position
             indices: vec![self.entity.index],
-            payload,
+            payload,                                       // whole Transform row
         });
         Some(delta)
     }
 }
 ```
 
-The editor applies the delta through the normal
-`apply_delta(world, &delta)` path so that generation guards, column bounds
-checks and rollback-on-error all behave exactly as they do for gameplay.
+The delta targets the **edit world** (spec 22) and, when the gizmo action is
+undoable, is wrapped in a spec-23 `Command` (via a transaction that collapses the
+drag frames into one undo step) before being applied.
 
 ### Local vs world space
 
@@ -202,8 +223,16 @@ portability and dependency-direction rules.
 - Gizmos are authoring-only: no influence on a shipped (non-editor) frame.
 - Emitted deltas go through `apply_delta`; never direct ECS writes from the
   input path.
-- Position writes are snapped fixed-point (`openengine-math`), matching what
-  Domain B would write — a gizmo move and a script move land in the same units.
+- **Edit world only.** Gizmo edits target the **edit world** (spec 22); the play
+  world is read-only for the editor and gizmos never mutate a simulated world.
+- **Undoable gizmo edits are spec-23 `Command`s.** A gizmo drag is a spec-23
+  `Command` (collapsed into one undo step per transaction) whose produced delta
+  is applied to the edit world; gizmo output is not a second mutation channel.
+- `Transform` (3D) writes are snapped fixed-point (`openengine-math`), written
+  as whole-element `ColumnWrite.payload` rows (read-modify-write of the full
+  `Transform`), matching the units Domain B would write — a gizmo move and a
+  script move land in the same units. Gizmos never write the 2D `Position`
+  component.
 - No `f32` enters any component column; `f32` stays inside editor camera and
   gizmo render math.
 - Portability: no hardcoded paths, no GPU assumptions beyond wgpu, works with
@@ -220,13 +249,14 @@ portability and dependency-direction rules.
 
 ## Testing strategy
 
-- Unit: ray/axis/torus hit math; drag → `WorldDelta` position math; snapping to
-  grid; local vs world derivation; scale/rotate math.
+- Unit: ray/axis/torus hit math; drag → `WorldDelta` `Transform` math; snapping
+  to grid; local vs world derivation; scale/rotate math.
 - Integration: drive a synthetic mouse ray + drag session, apply the resulting
-  delta to a seeded world, assert the fixed-point column changed by the expected
-  vector and that two identical drags yield bit-identical columns.
-- Property: for many random drags, the emitted `ColumnWrite.payload.len() ==
-  size_of::<FxVec3>()` and remains in fixed-point range.
+  delta to a seeded world, assert the fixed-point `Transform` column changed by
+  the expected vector and that two identical drags yield bit-identical columns.
+- Property: for many random drags, the emitted `ColumnWrite.payload` is a whole
+  `Transform` row of exactly the registered `Transform` `element_size` and
+  remains in fixed-point range.
 - Editor smoke test: no GPU in CI — verify gizmo *math* headless; render path
   gated behind a feature and tested manually.
 

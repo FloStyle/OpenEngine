@@ -63,9 +63,11 @@ pub trait Command: Send {
     /// Human/agent-readable label, e.g. "Move Sphere". Display-only.
     fn description(&self) -> String;
 
-    /// Stable serialized form for crash recovery / persistence (postcard).
-    /// Must round-trip through `postcard` and reconstruct an equal command
-    /// that reproduces identical forward/inverse deltas.
+    /// Serialize this command for crash recovery / persistence. Because
+    /// `Box<dyn Command>` is a trait object (postcard cannot round-trip trait
+    /// objects), this returns the **concrete, kind-tagged postcard payload**
+    /// (`CommandKind` discriminant + the concrete command struct's postcard
+    /// bytes). See "History persistence & crash recovery" below.
     fn serialize(&self) -> Vec<u8>;
 
     /// Generation guard token captured at authoring time (see Constraints).
@@ -76,6 +78,45 @@ pub trait Command: Send {
 A command must be **re-runnable**: calling `execute()` after a round-trip
 through `serialize()`/deserialize must produce a byte-identical `WorldDelta`.
 This is what makes undo/redo deterministic and crash-recoverable.
+
+### History persistence & crash recovery (tagged command-kind encoding)
+
+The in-memory stacks hold `Box<dyn Command>` trait objects, but a persisted
+history snapshot **cannot serialize a `Box<dyn Command>` directly** — postcard
+has no representation for a vtable / trait object, so it cannot round-trip one.
+Persistence therefore uses a **tagged command-kind encoding**:
+
+```rust
+/// One entry in the persisted history. The discriminant tells the decoder which
+/// concrete command struct the payload holds; `payload` is that struct's plain
+/// postcard bytes (all concrete commands below are `serde` + postcard-friendly).
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct PersistedCommand {
+    pub kind: CommandKind,
+    pub payload: Vec<u8>,          // postcard(ConcreteCommand)
+}
+
+/// Discriminant per concrete command type. Adding a command type must register a
+/// new variant here AND a decoder arm in the `CommandKind` registry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum CommandKind {
+    ModifyComponent,
+    SpawnEntity,
+    DespawnEntity,
+    AddComponent,
+    RemoveComponent,
+    RenameEntity,
+    ReparentEntity,
+    Composite,
+}
+```
+
+A `CommandKind` registry pairs each variant with a decoder that reconstructs the
+concrete struct from `payload` and upcasts it to `Box<dyn Command>`. On load,
+each `PersistedCommand` is decoded through the registry by its `kind`
+(unknown/missing kinds fail loudly with `EditorError` rather than silently
+dropping history), so a full snapshot round-trips to an identical
+`UndoRedoManager` whose stacks reproduce byte-identical forward/inverse deltas.
 
 ### The manager owns the two stacks
 
@@ -254,6 +295,11 @@ Despawn/undo interplay with the generation guard is covered under Constraints.
 
 ## Constraints
 
+- **Commands are the ONLY path for editor mutations.** No spec may introduce a
+  second mutation channel. Every editor write is expressed as a `Command` that
+  yields a `WorldDelta`, applied through `apply_delta`; there is no `QueryMut`
+  write path, no direct ECS write from UI/inspector/hierarchy/gizmos, and no
+  other editor-side mutation API.
 - **Edit-world only.** Commands produce deltas for the **edit world** (spec `22`
   edit-vs-play). Undo/redo never touch the play world; the play world is a
   separate sandboxed simulation that ignores editor history. This is
@@ -296,10 +342,14 @@ Despawn/undo interplay with the generation guard is covered under Constraints.
   conservatively (an eviction that passes the old save point marks the document
   effectively "cannot be saved back to that exact depth" → treated as needing a
   save).
-- **Serializable for crash recovery.** Commands must round-trip `postcard`
-  (spec `16`). A full history snapshot can be persisted alongside the scene so a
-  crash/restart can restore undo history. Every command records only stable
-  handles and raw bytes — no pointers, no host addresses.
+- **Serializable for crash recovery.** Commands persist via the **tagged
+  `CommandKind` registry** (see "History persistence & crash recovery" above) —
+  postcard cannot round-trip a `Box<dyn Command>` trait object, so the persisted
+  history is a `Vec<PersistedCommand>` of `(kind, postcard concrete payload)`
+  entries, decoded by kind on load. A full history snapshot can be persisted
+  alongside the scene (spec `16`) so a crash/restart can restore undo history.
+  Every command records only stable handles and raw bytes — no pointers, no host
+  addresses, no vtables.
 - **Portability / host-only.** Undo/redo lives in Domain A (`crates/editor`),
   compiled on `x86_64-linux` and `aarch64-linux`; never exported to the guest.
   Headless editor logic tests (no GPU, no window) drive commands and the manager
@@ -350,10 +400,14 @@ All tests headless (no GPU / no window) in `crates/editor`:
 - **Transaction batching.** Drive a synthetic gizmo drag emitting 60
   `ModifyComponentCommand`s inside one transaction; assert exactly **one** undo
   step results and that a single undo restores the original value in one delta.
-- **Serialization / persistence.** `serialize()` then deserialize each command;
-  assert `execute` reproduces a byte-identical delta. Persist a full history
-  snapshot with `postcard`, reload into a fresh `UndoRedoManager`, and assert the
-  same undo/redo behavior on the same world (crash-recovery path).
+- **Serialization / persistence.** Encode each concrete command as
+  `(CommandKind, postcard payload)`, decode it back through the `CommandKind`
+  registry, and assert `execute` reproduces a byte-identical delta. Persist a
+  full history snapshot (a `Vec<PersistedCommand>`) with `postcard`, reload it
+  into a fresh `UndoRedoManager`, and assert the same undo/redo behavior on the
+  same world (crash-recovery path). Also assert that an unknown/missing
+  `CommandKind` on load fails with `EditorError` rather than silently truncating
+  history.
 - **Edit-vs-play isolation.** While a (headless) play-world tick runs, assert
   that undo/redo commands are refused or only mutate the edit world and never
   surface in the play-world columns (spec `22`).
@@ -382,8 +436,8 @@ All tests headless (no GPU / no window) in `crates/editor`:
 4. Implement `Transaction` + composite/collapse for gesture batching.
 5. Wire the manager into the frame flush boundary so the inspector/hierarchy/
    gizmo edits flow through it (and only it).
-6. Add `postcard` serialization of commands + full-history persistence for crash
-   recovery.
+6. Add the `CommandKind` tagged encoding + registry and postcard full-history
+   persistence (`Vec<PersistedCommand>`) for crash recovery.
 7. Persist `save_point` semantics with scene save/load (spec `16`) and the
    exit-unsaved-changes warning.
 8. Land the headless test suite (unit, undo-all/redo-all, determinism, edge

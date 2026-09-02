@@ -23,9 +23,9 @@ all of which are **Domain-A tooling** producing **portable artifacts**:
 
 1. **Build configurations** — `Debug` / `Release` / `Shipping`, with a strict
    code/fidelity budget for each (what gets compiled in, what gets stripped out).
-2. **Platform targets** — Linux (`x86_64-linux` + `aarch64-linux`), macOS,
-   Windows, and Web (a `wasm32` build that is **wasmtime-compatible** because the
-   engine's own Domain-B runtime already runs on `wasm32-unknown-unknown`).
+2. **Platform targets** — native desktop only: Linux (`x86_64-linux` +
+   `aarch64-linux`), macOS, and Windows. The host binary is **never** compiled to
+   `wasm32`; `logic.wasm` (Domain B) is the engine's single Wasm artifact.
 3. **Asset cooking** — converting source assets (PNG/JPG/glTF/OBJ/WAV/OGG/TTF,
    spec 02) into a compact **runtime format**, deterministically, with the
    **`logic.wasm` Domain-B module as a first-class cooked artifact** whose purity
@@ -91,21 +91,33 @@ keeps `panic = "unwind"` for diagnostics.
 
 ### Platform targets
 
+The host binary is **native only** — the wgpu/winit/wasmtime host is compiled
+for OS-native desktop targets and is **not** built as `wasm32`.
+
 | Target | Build host | Notes |
 |--------|-----------|-------|
 | Linux `x86_64-unknown-linux-gnu` | any | primary; wgpu/winit deps from the pinned `Dockerfile` |
 | Linux `aarch64-unknown-linux-gnu` | any (cross via the container / QEMU) | portability requirement (AGENTS.md §5) |
 | macOS `x86_64-apple-darwin` / `aarch64-apple-darwin` | macOS runners (cross-sign tooling) | universal binary optional; notarization for distribution |
 | Windows `x86_64-pc-windows-msvc` | Windows runners | wgpu/winit native deps; MSVC |
-| Web `wasm32-unknown-unknown` | any | the game runtime's Domain-B module *is already* this target (spec 20); the **host shell** is compiled to wasm + wasmtime-compatible so it can run under `wasmtime` and be served to browsers via `wasm-bindgen`/WASI. |
 
-The Web story reuses a deep engine property: **Domain B already compiles to
-`wasm32-unknown-unknown`** (spec 20 builds `logic.wasm` for that target). A Web
-build therefore ships *two* wasm artifacts — the pure logic module and a
-host-shell module — and the host-shell is a **wasmtime-compatible** build (WASI /
-`wasm32-wasi`-aligned ABI imports), so the exact same deterministic simulation
-runs under `wasmtime` in tests and in a served context. Target selection is a
-CI/CLI parameter, never baked into a path (portability rule).
+`logic.wasm` (Domain B) is the **single** Wasm artifact, compiled to
+`wasm32-unknown-unknown` by `scripts/build.sh` and purity-verified at cook and
+release time (spec 20). There is **no** "wasmtime-compatible host shell": the
+wasmtime embedder runs *on the host* to execute the Domain-B module; the host
+itself never compiles to wasm, is not served via `wasm-bindgen`/WASI, and is not
+a `wasm32-wasi` build. Target selection is a CI/CLI parameter, never baked into
+a path (portability rule).
+
+### Web Deployment (Future Work)
+
+Running OpenEngine in a browser is **out of scope for v1**. The native host
+depends on OS-native wgpu (Vulkan/Metal/DX12) and an embedded wasmtime runtime,
+neither of which maps directly to the Web. A browser deployment would require a
+**separate host re-architecture** — a wgpu **WebGPU** backend and **no wasmtime**
+(the Domain-B `logic.wasm` runs under the browser's own Wasm engine). This spec
+documents the native shipping pipeline only; the Web target is future work and
+is intentionally not listed as a v1 platform.
 
 ### Asset cooking to runtime format
 
@@ -237,7 +249,9 @@ impl BuildProfile {
     pub fn carries_editor(self) -> bool { matches!(self, Self::Debug | Self::Release) }
 }
 
-/// A platform target the pipeline can build/package for.
+/// A native platform target the pipeline can build/package for. The host is
+/// never built for the Web (see "Web Deployment (Future Work)"), so there is
+/// no Web target here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Platform {
     LinuxX64,
@@ -245,7 +259,6 @@ pub enum Platform {
     MacOsX64,
     MacOsAarch64,
     WindowsX64,
-    WebWasm,
 }
 
 /// A cooked asset: source-relative logical token -> runtime blob.
@@ -314,9 +327,12 @@ built-in needs a component, it claims the lowest free id in 65–69 (or appends
 - **Shipping strips editor + debug only.** Panic `abort`, no backtrace/panics
   payloads; no spec 48 stepping/instrumentation; no editor shell (spec 22
   standalone). Determinism and the Domain-B module are untouched.
-- Portability of the Web shell: the `wasm32` host-shell is wasmtime-compatible
-  (WASI-aligned), so the identical Domain-B simulation runs under `wasmtime` and
-  in a browser.
+- **Host is native only.** The host binary is compiled for Linux
+  (`x86_64`/`aarch64`), macOS, and Windows only — never for `wasm32`, and there
+  is no "wasmtime-compatible / WASI host shell". `logic.wasm` (Domain B,
+  `wasm32-unknown-unknown`, built by `scripts/build.sh`) is the sole Wasm
+  artifact, purity-verified at cook/release. Browser deployment is a separate
+  host re-architecture and out of scope for v1 (see "Web Deployment").
 - Versioning ties to `ARCH_VERSION` and the real `Dockerfile`/`ci.yml`/`build.sh`
   as the build ground truth (spec 20).
 
@@ -347,8 +363,9 @@ built-in needs a component, it claims the lowest free id in 65–69 (or appends
   gate) while still producing bit-identical gameplay output for the same
   `logic.wasm` and inputs.
 - **Cross-platform:** build Linux x64/aarch64 (+ Docker/CI, spec 20); where a
-  runner exists, build macOS and Windows and Web wasm; assert the cooked
-  artifacts are byte-identical across targets (portability + determinism).
+  runner exists, build macOS and Windows (native desktop targets only); assert
+  the cooked artifacts are byte-identical across targets (portability +
+  determinism). `logic.wasm` is the only artifact built for `wasm32-unknown-unknown`.
 - **Packaging:** the single-binary+assets package boots a Shipping game
   standalone (spec 22) and resolves all assets by logical path with no absolute
   path present in the bundle.
@@ -383,5 +400,5 @@ built-in needs a component, it claims the lowest free id in 65–69 (or appends
    + update manifest.
 4. Wire semver tagging to `ARCH_VERSION` (MAJOR ⇔ ABI break) and add the release
    runbook for itch.io / Steam / self-hosted behind ADRs.
-5. Add the Docker/CI + cross-platform (Linux x64/aarch64, macOS, Windows, Web
-   wasmtime-compatible shell) build and determinism tests.
+5. Add the Docker/CI + cross-platform (Linux x64/aarch64, macOS, Windows)
+   native-host build and determinism tests.

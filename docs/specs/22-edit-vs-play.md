@@ -122,8 +122,9 @@ was before Play was pressed**. Implementation notes:
   already untouched — we just destroy the play world and its driver.
 - Any **play-time capture** the user chose to keep (e.g. an edited transform they
   want to copy back) is an explicit, separate user action ("Save to Edit"),
-  *not* automatic. That action is a normal edit-world mutation through the
-  editor's deterministic channel (spec 07) and is recorded in the undo history.
+  *not* automatic. That action is a normal edit-world mutation expressed as a
+  spec-23 `Command` (routed through the editor's single mutation channel) and is
+  recorded in the undo history.
 - **Undo history is anchored in the edit world only** and is *never* touched by
   Play. Entering/leaving Play adds **no** undo entries; the edit undo stack
   remains identical before and after a play session.
@@ -299,6 +300,14 @@ never sees wall-clock `dt`. Determinism holds because each tick still produces
 the same `WorldDelta` for the same `StateView` regardless of pacing.
 
 ## Constraints
+
+- **Editor systems operate only on the edit world.** Editor systems
+  (inspector/hierarchy/gizmos, specs 07/08/09) mutate **only** the edit world,
+  and every such mutation is expressed as a spec-23 `Command` (applied at the
+  flush boundary via `apply_delta`). The **play world is read-only for the
+  editor**: no editor system ever writes to a simulated world, whether Playing
+  or Paused. Paused play state is inspectable (via a read-only `StateView`) but
+  never editable.
 
 - **Two fully isolated worlds.** Edit and play never share memory: no shared
   `ComponentRegistry` entries held by both, no interned handle reused across
