@@ -419,6 +419,68 @@ pub const C_TAG: ComponentId            = ComponentId(9);
   specs 07/08/09), render pipeline (spec 04), physics (spec 13), scene codec
   (spec 06/16).
 
+## Extended Component Registry (engine additions — specs 30–50)
+
+The base registry above (0–9) is the source of truth for primitive components.
+As the engine grew to full feature parity (specs 30–50), engine subsystems
+registered additional components. **Reservation policy:** engine components own
+the `10–1023` band, reserved in ordered windows; game/user components live at
+`≥ 1024`. IDs are stable and never reassigned. Extend within the reserved window
+of the owning subsystem only; cross-subsystem claims must update this table.
+
+| Id | Component | Defining spec |
+|----|-----------|---------------|
+| 10 | `Skeleton` | 36-skeletal-animation |
+| 11 | `AnimationClip` (asset handle) | 36 |
+| 12 | `AnimationPlayer` | 36 |
+| 13 | `SkinnedMeshRenderer` | 36 |
+| 14 | `AnimatorController` | 37-animation-state-machines |
+| 15–19 | *(reserved — animation)* | 36/37 |
+| 20 | `ParticleEmitter` | 39-particle-system |
+| 21 | `ParticleModule` | 39 |
+| 22 | `PostProcessVolume` | 40-post-processing |
+| 23 | `PostProcessSettings` | 40 |
+| 24 | `ReflectionProbe` | 41-advanced-lighting |
+| 25 | `LightProbe` | 41 |
+| 26 | `LightmapSettings` | 41 |
+| 27–29 | *(reserved — VFX/rendering)* | 39–41 |
+| 30 | `Terrain` | 42-terrain-system |
+| 31 | `TerrainLayer` | 42 |
+| 32 | `FoliageType` | 43-vegetation-system |
+| 33 | `FoliageInstance` | 43 |
+| 34 | `BehaviorTree` | 44-behavior-trees |
+| 35 | `Blackboard` | 44 |
+| 36 | `AIAgent` | 44 |
+| 37 | `NavMesh` | 45-navigation |
+| 38 | `NavAgent` | 45 |
+| 39 | `NavObstacle` | 45 |
+| 40–49 | *(reserved — environment/AI)* | 42–45 |
+| 50 | `Sequence` | 46-sequencer |
+| 51 | `SequenceTrack` | 46 |
+| 52 | `SequenceKeyframe` | 46 |
+| 53 | `UICanvas` | 47-ui-system |
+| 54 | `UIElement` | 47 |
+| 55 | `UIText` | 47 |
+| 56 | `UIButton` | 47 |
+| 57–59 | *(reserved — cinematic/UI)* | 46–47 |
+| 60 | `RigidBody` | 49-advanced-physics |
+| 61 | `Collider` | 49 |
+| 62 | `PhysicsMaterial` | 49 |
+| 63 | `Joint` | 49 |
+| 64 | `ScriptNodeGraph` | 48-visual-scripting |
+| 65–69 | *(reserved — advanced)* | 48–50 |
+| ≥ 1024 | game/user components | — |
+
+Reuses from the base registry (not re-registered): `Transform`(2) for transform
+tracks/group ops, `Parent`(4) for UI trees and hierarchy, `Camera`(7) for
+cinematic-camera tracks, `Light`(8) for all light kinds. Editor/UI tooling
+(specs 30–35) introduces **no** new component.
+
+A few of these require a `contracts`/`ARCH_VERSION` bump plus `docs/abi/` entry
+before landing in code (e.g. particle record transport, `LightKind::Area`,
+`DeferredCommand` topics for UI events) — treat those as ABI-gated work, never
+silent changes.
+
 ## Next Steps
 
 1. Land this file's type definitions in `crates/ecs/src/components.rs` with the
