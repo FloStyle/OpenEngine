@@ -476,6 +476,7 @@ of the owning subsystem only; cross-subsystem claims must update this table.
 | 65–69 | *(reserved — advanced)* | 48–50 |
 | 70 | `Children` | 08-editor-hierarchy |
 | 71 | `Bounds` | 24-editor-viewport |
+| 72 | `Color` (RGBA) | PoC / ECS (`crates/ecs`) |
 | ≥ 1024 | game/user components | — |
 
 Reuses from the base registry (not re-registered): `Transform`(2) for transform
