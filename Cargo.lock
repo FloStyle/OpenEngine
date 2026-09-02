@@ -1390,7 +1390,10 @@ name = "openengine-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytemuck",
  "openengine-contracts",
+ "openengine-ecs",
+ "openengine-math",
  "pollster",
  "rayon",
  "wasmtime",
@@ -1403,6 +1406,7 @@ name = "openengine-ecs"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "openengine-contracts",
  "openengine-math",
 ]
 

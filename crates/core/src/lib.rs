@@ -79,6 +79,9 @@ pub mod platform {
     pub struct WindowHandle;
 }
 
+/// Native (Domain A) movement demo — PoC Phase B (single mutation channel).
+pub mod native_movement;
+
 /// Cross-crate ABI handshake used by tests and CI. The host refuses to boot on
 /// a mismatch between the linked `ARCH_VERSION` and the current ABI constant.
 pub fn abi_is_current() -> bool {

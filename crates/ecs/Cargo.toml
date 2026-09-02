@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 bytemuck.workspace = true
 openengine-math = { workspace = true }
+openengine-contracts = { workspace = true }
 
 [lints]
 workspace = true

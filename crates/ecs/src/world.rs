@@ -79,4 +79,54 @@ impl World {
         }
         hasher.finish()
     }
+
+    /// The `ArchetypeId` of this fixed single archetype (always `0`).
+    pub const fn archetype_id(&self) -> u32 {
+        0
+    }
+
+    /// Apply a [`WorldDelta`] through the single mutation channel.
+    ///
+    /// Only the fixed archetype (id `0`) and the `Position`/`Velocity` columns
+    /// are writable in this PoC. Spawns/despawns/deferred are not supported by
+    /// the fixed single archetype yet and are ignored (movement writes only).
+    /// Each `ColumnWrite` payload must be `indices.len() * element_size` of a
+    /// whole registered component (batched write, spec 00).
+    pub fn apply_delta(&mut self, delta: &openengine_contracts::WorldDelta) {
+        for write in &delta.writes {
+            if write.archetype.0 != self.archetype_id() {
+                continue;
+            }
+            let element = match write.component.0 {
+                POSITION => core::mem::size_of::<Position>(),
+                VELOCITY => core::mem::size_of::<Velocity>(),
+                _ => continue,
+            };
+            // Bounds-check the batched payload is whole elements.
+            if write.payload.len() != write.indices.len() * element {
+                continue;
+            }
+            for (slot, idx) in write.indices.iter().enumerate() {
+                let off = slot * element;
+                let bytes = &write.payload[off..off + element];
+                match write.component.0 {
+                    POSITION => {
+                        if let Some(col) = self.storage.get_column_mut::<Position>(POSITION) {
+                            if (*idx as usize) < col.len() {
+                                col[*idx as usize] = bytemuck::pod_read_unaligned::<Position>(bytes);
+                            }
+                        }
+                    }
+                    VELOCITY => {
+                        if let Some(col) = self.storage.get_column_mut::<Velocity>(VELOCITY) {
+                            if (*idx as usize) < col.len() {
+                                col[*idx as usize] = bytemuck::pod_read_unaligned::<Velocity>(bytes);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
 }
