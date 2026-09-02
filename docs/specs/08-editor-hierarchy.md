@@ -51,16 +51,26 @@ collects entities into a display list once per frame (see **Grouping**), renders
 ### Parent / child relation
 
 OpenEngine's ECS is archetype- and component-based (spec `00`); there is no
-built-in parent/child slot. Hierarchy is therefore represented as **a
-component**: a `Parent { parent: Entity }`/`Children` relation carried as
-regular `Pod` components on entities, resolved into a tree by the hierarchy
-system for display.
+built-in parent/child slot. Hierarchy is therefore represented as **components**
+registered in spec 21. The canonical relation is `Parent` (id **4**):
+`Parent { parent: Entity }` on the child, with `Entity::INVALID` == root. Its
+explicit inverse is the registered `Children` (id **70**) component, which lists
+the child handles of an entity for O(1) child enumeration when the tree needs it.
+The relation is resolved into a tree by the hierarchy system for display.
 
 ```rust
-// crates/ecs or a components crate — Domain A/B component definition.
+// crates/ecs or a components crate — Domain A/B component definition (spec 21).
 #[repr(C)]
 pub struct Parent { pub parent: Entity }      // Entity::INVALID == root
 ```
+
+`Parent` (4) is the single source of truth for structure; `Children` (70), when
+present, is a mirror the hierarchy maintains so a parent row can expand without
+scanning every entity. If a scene does not attach `Children`, children are simply
+**derived by scanning `Parent`**: an entity `e` is a child of `p` iff
+`e.Parent.parent == p`. Either representation is registered — there is no
+unregistered "Children" relation — and reparenting updates whichever mirror
+columns are in use via the same migration path below.
 
 Because `Parent` is a normal component, reparenting is an **archetype
 migration** (the entity leaves the "has no Parent" archetype for the "has a
@@ -157,7 +167,8 @@ does not change the world.
 
 - `HierarchySystem`, `HierarchyCommand`, `HierarchyCommands` — `crates/editor`.
 - `SelectionModel` — shared with spec `07`.
-- `Parent` component (`Entity::INVALID` == root) — where the relation lives.
+- `Parent` component (`Entity::INVALID` == root, spec 21 id 4) — the canonical
+  relation; `Children` (id 70) is its registered inverse mirror.
 - `WorldView<'a>` — safe immutable SoA read (same as spec `07`).
 - `contracts::{Entity, ArchetypeId, ComponentId, ColumnWrite, WorldDelta}`.
 
@@ -170,7 +181,8 @@ does not change the world.
   `HierarchyCommand`s; it never mutates ECS storage mid-iteration.
 - All structural changes (spawn/despawn/reparent/rename/batch) flush through
   `WorldDelta` at the flush boundary and reuse the migration path.
-- Parent/child is a component (`Parent`), not a special ECS slot; reparent is a
+- Parent/child is a component (`Parent`(4), registered in spec 21) with an
+  optional `Children`(70) inverse mirror, not a special ECS slot; reparent is a
   migration.
 - Deterministic ordering: batch and reparent resolve handles before issuing and
   apply in stable order; no `HashMap` iteration in tree building.

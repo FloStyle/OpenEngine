@@ -70,9 +70,9 @@ stable across ABI revisions.
 | 8             | `Light`       | 20        | 4          | light source (render, later phase)          |
 | 9             | `Tag`         | 64        | 1          | classification label for queries/filters    |
 
-IDs 10..=1023 are reserved for future *built-in* primitives (physics colliders
-of spec 13, audio emitters of spec 14, etc.) and are appended by later specs in
-the order they land. IDs ≥ 1024 are reserved for **game/mod author components**
+IDs 10..=1023 are reserved for future *built-in* primitives (physics components
+of spec 49, audio emitters of spec 14, etc.) and are appended by later specs in
+the order they land (see the "Extended Component Registry" table below). IDs ≥ 1024 are reserved for **game/mod author components**
 registered at runtime by a project. The `ComponentRegistry` enforces that no ID
 is registered twice and that built-in IDs below 1024 are never taken by user
 code.
@@ -363,6 +363,11 @@ pub const C_TAG: ComponentId            = ComponentId(9);
 - **Serializable deterministically:** each struct is `serde`-serializable; the
   scene/world codec (spec 16) stores raw Pod column bytes plus a registered
   element-size, so a deserialized column must match `size_of` exactly.
+- **Per-component `layout_version`:** every registered component carries a
+  per-component schema revision starting at `contracts::COMPONENT_LAYOUT_VERSION`
+  (= `1`). It is bumped on any `#[repr(C)]` field change and used by the spec-16
+  codec to migrate component-local layout drift independently of the global
+  `ARCH_VERSION`.
 - Cross-platform identical on `x86_64-linux` and `aarch64-linux`; no platform
   `repr` differences for these field types (I16F16 is `i32`; fixed arrays have
   no padding surprises given the alignment table above).
@@ -469,6 +474,8 @@ of the owning subsystem only; cross-subsystem claims must update this table.
 | 63 | `Joint` | 49 |
 | 64 | `ScriptNodeGraph` | 48-visual-scripting |
 | 65–69 | *(reserved — advanced)* | 48–50 |
+| 70 | `Children` | 08-editor-hierarchy |
+| 71 | `Bounds` | 24-editor-viewport |
 | ≥ 1024 | game/user components | — |
 
 Reuses from the base registry (not re-registered): `Transform`(2) for transform
