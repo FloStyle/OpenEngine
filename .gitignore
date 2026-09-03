@@ -34,3 +34,6 @@ Thumbs.db
 crates/logic-sandbox/target-wasm/
 artifacts/
 crates/core/assets/logic.wasm
+
+# --- Cooked game distributables (built by scripts/package.sh, not authored) ---
+/dist/
