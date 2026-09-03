@@ -420,3 +420,328 @@ mod with_input_tests {
         }
     }
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// § Phase E — headless 3D gameplay (homogeneous mono-archetype layout)
+//
+// Pure function over SoA slices: player (entity 0) driven by InputState3D
+// (WASD + jump), NPCs (entities 1..N) by deterministic behaviours (kind 1 =
+// wander, 2 = circle, 3 = chase). Gravity/ground/jump in fixed-point, no f32,
+// no trig/sqrt — integer-derived, bit-deterministic. Returns batched writes.
+// ────────────────────────────────────────────────────────────────────────────
+
+use openengine_contracts::{Actor, Fx16, InputState3D, Transform, Velocity3D};
+
+/// Gravity added to a rising/falling y-velocity per tick while airborne.
+const GRAVITY_TICK: i32 = -2;
+
+/// Deterministic xorshift32 (same seed => same stream on every platform).
+fn xorshift32(mut state: u32) -> u32 {
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    state
+}
+
+fn pack3<T: bytemuck::Pod>(rows: &[T]) -> alloc::vec::Vec<u8> {
+    let mut out = alloc::vec![0u8; core::mem::size_of_val(rows)];
+    let mut i = 0usize;
+    for r in rows {
+        let b = bytemuck::bytes_of(r);
+        out[i..i + b.len()].copy_from_slice(b);
+        i += b.len();
+    }
+    out
+}
+
+/// One deterministic gameplay tick.
+pub fn gameplay_tick(
+    frame: u64,
+    transforms: &[Transform],
+    velocities: &[Velocity3D],
+    actors: &[Actor],
+    input: &InputState3D,
+) -> Result<WorldDelta, RecoverableError> {
+    let n = core::cmp::min(
+        core::cmp::min(transforms.len(), velocities.len()),
+        actors.len(),
+    );
+    let mut t = transforms[..n].to_vec();
+    let mut v = velocities[..n].to_vec();
+    let mut a = actors[..n].to_vec();
+
+    for i in 0..n {
+        let mut pos = t[i].position;
+        let vel = v[i].linear;
+        let actor = a[i];
+        let (mut vx, mut vy, mut vz) = (vel[0], vel[1], vel[2]);
+
+        if i == 0 {
+            // Player: WASD -> horizontal velocity from pure input data.
+            let s = actor.move_speed;
+            let (mut mx, mut mz) = (Fx16::from_num(0), Fx16::from_num(0));
+            if input.forward != 0 {
+                mz = -s;
+            }
+            if input.backward != 0 {
+                mz = s;
+            }
+            if input.left != 0 {
+                mx = -s;
+            }
+            if input.right != 0 {
+                mx = s;
+            }
+            vx = mx;
+            vz = mz;
+            // Jump.
+            if input.jump != 0 && actor.grounded != 0 && actor.jump_cd == 0 {
+                vy = actor.jump_force;
+                a[i].grounded = 0;
+                a[i].jump_cd = 12;
+            }
+        } else {
+            match actor.kind {
+                1 => {
+                    // Wander: pick a new 8-direction on a fixed cadence.
+                    if frame % 120 == 0 {
+                        let r = xorshift32(actor.seed.wrapping_add(frame as u32));
+                        let dir = r % 8;
+                        let (dx, dz) = match dir {
+                            0 => (1, 0),
+                            1 => (1, 1),
+                            2 => (0, 1),
+                            3 => (-1, 1),
+                            4 => (-1, 0),
+                            5 => (-1, -1),
+                            6 => (0, -1),
+                            _ => (1, -1),
+                        };
+                        vx = Fx16::from_num(dx * actor.move_speed.to_num::<i32>());
+                        vz = Fx16::from_num(dz * actor.move_speed.to_num::<i32>());
+                    }
+                }
+                2 => {
+                    // Circle around origin (deterministic tangential drift).
+                    let r = Fx16::from_num(10);
+                    let sx = Fx16::from_num(actor.move_speed.to_num::<i32>());
+                    vx = -(pos[2] * sx) / r;
+                    vz = (pos[0] * sx) / r;
+                }
+                _ => {
+                    // Chase entity 0: integer axis step toward the player.
+                    let p = t[0].position;
+                    vx = if p[0] > pos[0] {
+                        actor.move_speed
+                    } else if p[0] < pos[0] {
+                        -actor.move_speed
+                    } else {
+                        Fx16::from_num(0)
+                    };
+                    vz = if p[2] > pos[2] {
+                        actor.move_speed
+                    } else if p[2] < pos[2] {
+                        -actor.move_speed
+                    } else {
+                        Fx16::from_num(0)
+                    };
+                }
+            }
+        }
+
+        // Gravity while airborne.
+        if actor.grounded == 0 {
+            vy += Fx16::from_num(GRAVITY_TICK);
+        }
+        // Integrate (velocity in units/tick).
+        pos[0] += vx;
+        pos[1] += vy;
+        pos[2] += vz;
+        // Ground clamp.
+        if pos[1] <= Fx16::from_num(0) && vy <= Fx16::from_num(0) {
+            pos[1] = Fx16::from_num(0);
+            vy = Fx16::from_num(0);
+            a[i].grounded = 1;
+        }
+        if a[i].jump_cd > 0 {
+            a[i].jump_cd -= 1;
+        }
+
+        t[i].position = pos;
+        v[i] = Velocity3D {
+            linear: [vx, vy, vz],
+        };
+    }
+
+    let indices: Vec<u32> = (0..n as u32).collect();
+    let mut delta = WorldDelta::default();
+    delta.writes.push(ColumnWrite {
+        archetype: ArchetypeId(0),
+        component: ComponentId(comp::TRANSFORM),
+        indices: indices.clone(),
+        payload: pack3(&t),
+    });
+    delta.writes.push(ColumnWrite {
+        archetype: ArchetypeId(0),
+        component: ComponentId(comp::VELOCITY3D),
+        indices: indices.clone(),
+        payload: pack3(&v),
+    });
+    delta.writes.push(ColumnWrite {
+        archetype: ArchetypeId(0),
+        component: ComponentId(comp::ACTOR),
+        indices,
+        payload: pack3(&a),
+    });
+    Ok(delta)
+}
+
+#[cfg(test)]
+mod gameplay_tests {
+    use super::*;
+    use openengine_contracts::Transform;
+    use openengine_math::I16F16 as F;
+
+    fn read_tx(delta: &WorldDelta) -> Vec<Transform> {
+        let w = delta
+            .writes
+            .iter()
+            .find(|w| w.component.0 == comp::TRANSFORM)
+            .unwrap();
+        (0..(w.payload.len() / core::mem::size_of::<Transform>()))
+            .map(|i| bytemuck::pod_read_unaligned::<Transform>(&w.payload[i * 40..i * 40 + 40]))
+            .collect()
+    }
+    fn read_vy(delta: &WorldDelta) -> Vec<Velocity3D> {
+        let w = delta
+            .writes
+            .iter()
+            .find(|w| w.component.0 == comp::VELOCITY3D)
+            .unwrap();
+        (0..(w.payload.len() / core::mem::size_of::<Velocity3D>()))
+            .map(|i| bytemuck::pod_read_unaligned::<Velocity3D>(&w.payload[i * 12..i * 12 + 12]))
+            .collect()
+    }
+    fn read_actor(delta: &WorldDelta) -> Vec<Actor> {
+        let w = delta
+            .writes
+            .iter()
+            .find(|w| w.component.0 == comp::ACTOR)
+            .unwrap();
+        (0..(w.payload.len() / core::mem::size_of::<Actor>()))
+            .map(|i| bytemuck::pod_read_unaligned::<Actor>(&w.payload[i * 24..i * 24 + 24]))
+            .collect()
+    }
+    fn at(x: i32, y: i32, z: i32) -> Transform {
+        Transform::at(F::from_num(x), F::from_num(y), F::from_num(z))
+    }
+    fn step(
+        t: &mut Vec<Transform>,
+        v: &mut Vec<Velocity3D>,
+        a: &mut Vec<Actor>,
+        frame: u64,
+        input: &InputState3D,
+    ) {
+        let d = gameplay_tick(frame, t, v, a, input).unwrap();
+        *t = read_tx(&d);
+        *v = read_vy(&d);
+        *a = read_actor(&d);
+    }
+
+    #[test]
+    fn horizontal_forward_moves_negative_z() {
+        let mut t = vec![at(0, 0, 0)];
+        let mut v = vec![Velocity3D::zero()];
+        let mut a = vec![Actor::player(F::from_num(5), F::from_num(30))];
+        let input = InputState3D {
+            forward: 1,
+            ..InputState3D::none()
+        };
+        for f in 0..100 {
+            step(&mut t, &mut v, &mut a, f, &input);
+        }
+        assert!(
+            t[0].position[2] < F::from_num(-100),
+            "forward must move the player along -Z"
+        );
+    }
+
+    #[test]
+    fn jump_rises_then_lands() {
+        let mut t = vec![at(0, 0, 0)];
+        let mut v = vec![Velocity3D::zero()];
+        let mut a = vec![Actor::player(F::from_num(5), F::from_num(40))];
+        let jump = InputState3D {
+            jump: 1,
+            ..InputState3D::none()
+        };
+        step(&mut t, &mut v, &mut a, 0, &jump);
+        assert_eq!(a[0].grounded, 0, "jump must leave the ground");
+        assert!(
+            v[0].linear[1] > F::from_num(0),
+            "jump must give upward velocity"
+        );
+        // Continue (no input) until it lands.
+        let still = InputState3D::none();
+        for f in 1..200 {
+            step(&mut t, &mut v, &mut a, f, &still);
+        }
+        assert_eq!(a[0].grounded, 1, "must land again");
+        assert_eq!(t[0].position[1], F::from_num(0), "must clamp at ground y=0");
+    }
+
+    #[test]
+    fn full_gameplay_determinism_3x() {
+        let run = || {
+            let mut t: Vec<Transform> = (0..100)
+                .map(|i| at((i % 10) * 2, 0, (i / 10) * 2))
+                .collect();
+            let mut v: Vec<Velocity3D> = vec![Velocity3D::zero(); 100];
+            let mut a: Vec<Actor> = (0..100)
+                .map(|_| Actor::player(F::from_num(5), F::from_num(30)))
+                .collect();
+            for (i, slot) in a.iter_mut().enumerate().skip(1) {
+                *slot = Actor::npc(if i % 2 == 0 { 1 } else { 3 }, i as u32);
+            }
+            for f in 0..1000 {
+                let input = if f < 200 {
+                    InputState3D {
+                        forward: 1,
+                        ..InputState3D::none()
+                    }
+                } else {
+                    InputState3D::none()
+                };
+                step(&mut t, &mut v, &mut a, f, &input);
+            }
+            (t, v, a)
+        };
+        let (t1, v1, a1) = run();
+        let (t2, v2, a2) = run();
+        let (t3, v3, a3) = run();
+        assert_eq!(t1, t2);
+        assert_eq!(t2, t3);
+        assert_eq!(v1, v2);
+        assert_eq!(v2, v3);
+        assert_eq!(a1, a2);
+        assert_eq!(a2, a3);
+    }
+
+    #[test]
+    fn npc_chase_moves_toward_player() {
+        // Player at origin (idle); NPC at x=+20 chasing (kind 3).
+        let mut t = vec![at(0, 0, 0), at(20, 0, 0)];
+        let mut v = vec![Velocity3D::zero(), Velocity3D::zero()];
+        let mut a = vec![
+            Actor::player(F::from_num(5), F::from_num(30)),
+            Actor::npc(3, 7),
+        ];
+        for f in 0..10 {
+            step(&mut t, &mut v, &mut a, f, &InputState3D::none());
+        }
+        assert!(
+            t[1].position[0] < F::from_num(20),
+            "chaser must move toward the player (-X)"
+        );
+    }
+}

@@ -368,13 +368,10 @@ impl Actor {
 }
 
 /// Pure 3D gameplay input (WASD + jump + look deltas) carried as data.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+/// Not `Pod` (host-side input record; crosses the guest via a compact wire
+/// form in the bridge, not as an SoA column).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InputState3D {
-    /// Camera yaw delta (fixed).
-    pub yaw_delta: Fx16,
-    /// Camera pitch delta (fixed).
-    pub pitch_delta: Fx16,
     /// 1 = forward.
     pub forward: u8,
     /// 1 = backward.
@@ -385,22 +382,23 @@ pub struct InputState3D {
     pub right: u8,
     /// 1 = jump.
     pub jump: u8,
-    /// Explicit padding so the struct is padding-free/Pod.
-    _pad: [u8; 3],
+    /// Camera yaw delta (fixed).
+    pub yaw_delta: Fx16,
+    /// Camera pitch delta (fixed).
+    pub pitch_delta: Fx16,
 }
 
 impl InputState3D {
     /// No input.
     pub const fn none() -> Self {
         InputState3D {
-            yaw_delta: Fx16::from_bits(0),
-            pitch_delta: Fx16::from_bits(0),
             forward: 0,
             backward: 0,
             left: 0,
             right: 0,
             jump: 0,
-            _pad: [0; 3],
+            yaw_delta: Fx16::from_bits(0),
+            pitch_delta: Fx16::from_bits(0),
         }
     }
 }

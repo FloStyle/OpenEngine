@@ -1,7 +1,7 @@
 //! The `World`: a single fixed archetype of `Position + Velocity + Color` and,
 //! for the 3D editor, a `Transform` (id 2) column.
 
-use openengine_contracts::{comp, Transform};
+use openengine_contracts::{comp, Actor, Transform, Velocity3D};
 
 use crate::components::{Color, Position, Velocity, COLOR, POSITION, VELOCITY};
 use crate::storage::ArchetypeStorage;
@@ -19,18 +19,20 @@ impl Default for World {
 
 impl World {
     /// A world whose archetype holds `Position`(0), `Velocity`(1),
-    /// `Transform`(2) and `Color`(72).
+    /// `Transform`(2), `Velocity3D`(80), `Actor`(81) and `Color`(72).
     pub fn new() -> Self {
         let mut storage = ArchetypeStorage::new();
         storage.add_column::<Position>(POSITION);
         storage.add_column::<Velocity>(VELOCITY);
         storage.add_column::<Transform>(comp::TRANSFORM);
+        storage.add_column::<Velocity3D>(comp::VELOCITY3D);
+        storage.add_column::<Actor>(comp::ACTOR);
         storage.add_column::<Color>(COLOR);
         World { storage }
     }
 
     /// Spawn a new row into the archetype. Returns its stable row index.
-    /// The 3D `Transform` column is initialized to identity at the origin.
+    /// 3D `Transform`/`Velocity3D`/`Actor` columns are zero-initialized.
     pub fn spawn(&mut self, pos: Position, vel: Velocity, color: Color) -> usize {
         let index = self.storage.allocate();
         self.storage.get_column_mut::<Position>(POSITION).unwrap()[index] = pos;
@@ -42,6 +44,17 @@ impl World {
             openengine_math::I16F16::from_num(0),
             openengine_math::I16F16::from_num(0),
         );
+        self.storage
+            .get_column_mut::<Velocity3D>(comp::VELOCITY3D)
+            .unwrap()[index] = Velocity3D::zero();
+        self.storage.get_column_mut::<Actor>(comp::ACTOR).unwrap()[index] = Actor {
+            kind: 0,
+            seed: 0,
+            grounded: 1,
+            jump_cd: 0,
+            move_speed: openengine_math::I16F16::from_num(0),
+            jump_force: openengine_math::I16F16::from_num(0),
+        };
         self.storage.get_column_mut::<Color>(COLOR).unwrap()[index] = color;
         index
     }
@@ -51,6 +64,24 @@ impl World {
         if let Some(col) = self.storage.get_column_mut::<Transform>(comp::TRANSFORM) {
             if index < col.len() {
                 col[index] = t;
+            }
+        }
+    }
+
+    /// Set an entity's 3D velocity (host ECS plumbing).
+    pub fn set_velocity_3d(&mut self, index: usize, v: Velocity3D) {
+        if let Some(col) = self.storage.get_column_mut::<Velocity3D>(comp::VELOCITY3D) {
+            if index < col.len() {
+                col[index] = v;
+            }
+        }
+    }
+
+    /// Set an entity's gameplay actor tag (host ECS plumbing).
+    pub fn set_actor(&mut self, index: usize, a: Actor) {
+        if let Some(col) = self.storage.get_column_mut::<Actor>(comp::ACTOR) {
+            if index < col.len() {
+                col[index] = a;
             }
         }
     }
@@ -80,6 +111,16 @@ impl World {
     /// Read-only `Transform` column (3D; first `entity_count` rows valid).
     pub fn get_transforms(&self) -> Option<&[Transform]> {
         self.storage.get_column::<Transform>(comp::TRANSFORM)
+    }
+
+    /// Read-only `Velocity3D` column (3D gameplay).
+    pub fn get_velocity_3d(&self) -> Option<&[Velocity3D]> {
+        self.storage.get_column::<Velocity3D>(comp::VELOCITY3D)
+    }
+
+    /// Read-only `Actor` column (gameplay tag + params).
+    pub fn get_actors(&self) -> Option<&[Actor]> {
+        self.storage.get_column::<Actor>(comp::ACTOR)
     }
 
     /// Read-only `Color` column.
@@ -124,6 +165,20 @@ impl World {
                 }
             }
         }
+        if let Some(rows) = self.get_velocity_3d() {
+            for row in rows.iter().take(n) {
+                for c in row.linear {
+                    c.to_bits().hash(&mut hasher);
+                }
+            }
+        }
+        if let Some(rows) = self.get_actors() {
+            for row in rows.iter().take(n) {
+                (row.kind, row.seed, row.grounded, row.jump_cd).hash(&mut hasher);
+                row.move_speed.to_bits().hash(&mut hasher);
+                row.jump_force.to_bits().hash(&mut hasher);
+            }
+        }
         hasher.finish()
     }
 
@@ -148,6 +203,8 @@ impl World {
                 POSITION => core::mem::size_of::<Position>(),
                 VELOCITY => core::mem::size_of::<Velocity>(),
                 comp::TRANSFORM => core::mem::size_of::<Transform>(),
+                comp::VELOCITY3D => core::mem::size_of::<Velocity3D>(),
+                comp::ACTOR => core::mem::size_of::<Actor>(),
                 _ => continue,
             };
             // Bounds-check the batched payload is whole elements.
@@ -180,6 +237,23 @@ impl World {
                             if (*idx as usize) < col.len() {
                                 col[*idx as usize] =
                                     bytemuck::pod_read_unaligned::<Transform>(bytes);
+                            }
+                        }
+                    }
+                    comp::VELOCITY3D => {
+                        if let Some(col) =
+                            self.storage.get_column_mut::<Velocity3D>(comp::VELOCITY3D)
+                        {
+                            if (*idx as usize) < col.len() {
+                                col[*idx as usize] =
+                                    bytemuck::pod_read_unaligned::<Velocity3D>(bytes);
+                            }
+                        }
+                    }
+                    comp::ACTOR => {
+                        if let Some(col) = self.storage.get_column_mut::<Actor>(comp::ACTOR) {
+                            if (*idx as usize) < col.len() {
+                                col[*idx as usize] = bytemuck::pod_read_unaligned::<Actor>(bytes);
                             }
                         }
                     }
