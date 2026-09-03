@@ -6,6 +6,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "openengine-runner"
+path = "src/bin/runner.rs"
+
 [dependencies]
 openengine-ecs = { path = "../ecs" }
 openengine-contracts = { workspace = true }

@@ -9,6 +9,7 @@
 //! and to prove determinism via the returned hashes.
 
 pub mod api;
+pub mod runner;
 pub mod state;
 pub mod wasm_guest;
 
