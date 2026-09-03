@@ -294,3 +294,129 @@ mod movement_tests {
         assert_eq!(px, 498 << 16);
     }
 }
+
+/// Movement that applies pure `PlayerInput` data for entity 0 (the player).
+///
+/// When no arrow is pressed, entity 0 keeps its stored velocity (so a
+/// no-input run is identical to [`movement_system`]); when an arrow is held,
+/// its velocity is derived purely from the input data. NPCs always use their
+/// stored velocities. Fully deterministic, fixed-point.
+pub fn movement_system_with_input(
+    positions: &[openengine_contracts::Position],
+    velocities: &[openengine_contracts::Velocity],
+    input: &openengine_contracts::PlayerInput,
+) -> Result<WorldDelta, RecoverableError> {
+    let n = core::cmp::min(positions.len(), velocities.len());
+    let speed = I16F16::from_num(input.speed as i32);
+    let mut new_pos: Vec<openengine_contracts::Position> = Vec::with_capacity(n);
+    let mut new_vel: Vec<openengine_contracts::Velocity> = Vec::with_capacity(n);
+    for i in 0..n {
+        let p = positions[i];
+        let v = velocities[i];
+        // Player derives velocity from input only when a direction is held.
+        let (mut vx, mut vy) = (v.x, v.y);
+        if i == 0 && (input.up | input.down | input.left | input.right) != 0 {
+            vx = I16F16::from_num(0);
+            vy = I16F16::from_num(0);
+            if input.left != 0 {
+                vx = -speed;
+            }
+            if input.right != 0 {
+                vx = speed;
+            }
+            if input.up != 0 {
+                vy = -speed;
+            }
+            if input.down != 0 {
+                vy = speed;
+            }
+        }
+        let nx = p.x + vx;
+        let ny = p.y + vy;
+        let (fx, fvx) = if nx < I16F16::from_num(WALL_MIN) || nx > I16F16::from_num(WALL_MAX) {
+            (p.x, -vx)
+        } else {
+            (nx, vx)
+        };
+        let (fy, fvy) = if ny < I16F16::from_num(WALL_MIN) || ny > I16F16::from_num(WALL_MAX) {
+            (p.y, -vy)
+        } else {
+            (ny, vy)
+        };
+        new_pos.push(openengine_contracts::Position { x: fx, y: fy });
+        new_vel.push(openengine_contracts::Velocity { x: fvx, y: fvy });
+    }
+
+    let indices: Vec<u32> = (0..n as u32).collect();
+    let mut delta = WorldDelta::default();
+    delta.writes.push(ColumnWrite {
+        archetype: ArchetypeId(0),
+        component: ComponentId(comp::POSITION),
+        indices: indices.clone(),
+        payload: pack(&new_pos),
+    });
+    delta.writes.push(ColumnWrite {
+        archetype: ArchetypeId(0),
+        component: ComponentId(comp::VELOCITY),
+        indices,
+        payload: pack(&new_vel),
+    });
+    Ok(delta)
+}
+
+#[cfg(test)]
+mod with_input_tests {
+    use super::*;
+    use openengine_contracts::PlayerInput;
+    use openengine_contracts::Position;
+
+    fn pos_vel() -> (Vec<Position>, Vec<openengine_contracts::Velocity>) {
+        let pos = vec![Position {
+            x: I16F16::from_num(100),
+            y: I16F16::from_num(100),
+        }];
+        let vel = vec![openengine_contracts::Velocity {
+            x: I16F16::from_num(0),
+            y: I16F16::from_num(0),
+        }];
+        (pos, vel)
+    }
+
+    fn first_position(delta: &WorldDelta) -> Position {
+        // Position ColumnWrite payload = packed Position; read first element.
+        let w = delta
+            .writes
+            .iter()
+            .find(|w| w.component.0 == comp::POSITION)
+            .unwrap();
+        bytemuck::pod_read_unaligned::<Position>(&w.payload[..core::mem::size_of::<Position>()])
+    }
+
+    #[test]
+    fn left_input_moves_player_left_purely() {
+        let (p, v) = pos_vel();
+        let input = PlayerInput {
+            left: 1,
+            ..PlayerInput::none()
+        };
+        let d = movement_system_with_input(&p, &v, &input).unwrap();
+        let pos = first_position(&d);
+        assert!(
+            pos.x < p[0].x,
+            "holding left must move the player -x in pure guest logic"
+        );
+    }
+
+    #[test]
+    fn no_input_keeps_stored_velocity() {
+        let (p, v) = pos_vel();
+        let none = PlayerInput::none();
+        let a = movement_system_with_input(&p, &v, &none).unwrap();
+        let b = movement_system(&p, &v).unwrap();
+        assert_eq!(a.writes.len(), b.writes.len());
+        // Same payload bytes => pure no-input path is identical to movement_system.
+        for (wa, wb) in a.writes.iter().zip(b.writes.iter()) {
+            assert_eq!(wa.payload, wb.payload);
+        }
+    }
+}

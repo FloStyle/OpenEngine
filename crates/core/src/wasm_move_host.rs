@@ -1,13 +1,15 @@
-//! Wasm SoA movement host — PoC Phase 3 (ADR-0001 bridge).
+//! Wasm SoA movement host — PoC Phase 3/4 (ADR-0001 bridge).
 //!
 //! Drives the guest movement export `openengine_move_tick`:
-//! 1. serialize `[postcard(columns)][column arena]` from the host `World`,
+//! 1. serialize `[postcard PlayerInput][postcard columns][column arena]`,
 //! 2. write it into a guest-allocated input buffer (`openengine_alloc`),
 //! 3. call `openengine_move_tick(input, len, out, cap)`,
 //! 4. read + decode the returned `WorldDelta`.
+//!
+//! Player input is pure DATA (Phase D) — the host never writes velocity.
 
 use anyhow::Context;
-use openengine_contracts::{comp, ColumnDescriptor, ComponentId, WorldDelta};
+use openengine_contracts::{comp, ColumnDescriptor, ComponentId, PlayerInput, WorldDelta};
 use openengine_ecs::{Position, Velocity, World};
 use wasmtime::{Engine, Instance, Linker, Memory, Module, Store, TypedFunc};
 
@@ -24,6 +26,8 @@ pub struct WasmMoveHost {
     input_ptr: u32,
     /// Guest-allocated output buffer address (leaked once, reused every tick).
     output_ptr: u32,
+    /// Current pure player input passed as data to the guest.
+    input: PlayerInput,
 }
 
 impl WasmMoveHost {
@@ -58,7 +62,13 @@ impl WasmMoveHost {
             memory,
             input_ptr,
             output_ptr,
+            input: PlayerInput::none(),
         })
+    }
+
+    /// Set the pure player input sent to the guest on the next tick.
+    pub fn set_input(&mut self, input: PlayerInput) {
+        self.input = input;
     }
 
     /// Run one guest movement tick over `world` and return its `WorldDelta`.
@@ -83,9 +93,13 @@ impl WasmMoveHost {
                 data_offset: pos_bytes.len() as u32,
             },
         ];
+        let input_bytes = postcard::to_allocvec(&self.input).context("encode player input")?;
         let cols_bytes = postcard::to_allocvec(&columns).context("encode columns")?;
 
-        let mut input = Vec::with_capacity(cols_bytes.len() + pos_bytes.len() + vel_bytes.len());
+        let mut input = Vec::with_capacity(
+            input_bytes.len() + cols_bytes.len() + pos_bytes.len() + vel_bytes.len(),
+        );
+        input.extend_from_slice(&input_bytes);
         input.extend_from_slice(&cols_bytes);
         input.extend_from_slice(pos_bytes);
         input.extend_from_slice(vel_bytes);

@@ -114,9 +114,9 @@ use openengine_contracts::{ColumnDescriptor, Position, Velocity};
 
 /// Run one movement tick.
 ///
-/// `input_ptr/input_len`: host-written `[postcard(columns)][arena]`.
-/// `out_ptr/out_cap`: host output buffer for the encoded WorldDelta.
-/// Returns the number of output bytes, or 0 on failure.
+/// `input_ptr/input_len`: host-written `[postcard PlayerInput][postcard
+/// columns][column arena]`. `out_ptr/out_cap`: host output buffer for the
+/// encoded WorldDelta. Returns the number of output bytes, or 0 on failure.
 ///
 /// # Safety
 /// `input_ptr..+input_len` and `out_ptr..+out_cap` are valid guest linear-memory
@@ -133,8 +133,13 @@ pub unsafe extern "C" fn openengine_move_tick(
     let input_bytes: &[u8] =
         unsafe { core::slice::from_raw_parts(input_ptr as *const u8, input_len as usize) };
 
-    // Layout: [postcard Vec<ColumnDescriptor>][column arena].
-    let (columns, arena) = match postcard::take_from_bytes::<Vec<ColumnDescriptor>>(input_bytes) {
+    // Layout: [postcard PlayerInput][postcard columns][column arena].
+    let (player_input, rest) =
+        match postcard::take_from_bytes::<openengine_contracts::PlayerInput>(input_bytes) {
+            Ok(v) => v,
+            Err(_) => return 0,
+        };
+    let (columns, arena) = match postcard::take_from_bytes::<Vec<ColumnDescriptor>>(rest) {
         Ok(v) => v,
         Err(_) => return 0,
     };
@@ -143,8 +148,13 @@ pub unsafe extern "C" fn openengine_move_tick(
     let velocities: Vec<Velocity> = read_column(&columns, arena, comp::VELOCITY);
     let n = positions.len().min(velocities.len());
 
-    // Run the PURE movement logic (forbid(unsafe_code)) on owned slices.
-    let delta = match openengine_logic_sandbox::movement_system(&positions[..n], &velocities[..n]) {
+    // Run the PURE movement logic (forbid(unsafe_code)) on owned slices, with
+    // the player input as data.
+    let delta = match openengine_logic_sandbox::movement_system_with_input(
+        &positions[..n],
+        &velocities[..n],
+        &player_input,
+    ) {
         Ok(d) => d,
         Err(_) => return 0,
     };

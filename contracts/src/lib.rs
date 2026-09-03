@@ -230,6 +230,56 @@ pub enum ViewMode {
     Lit = 3,
 }
 
+/// Pure player intent, carried as DATA in the wasm input buffer (Phase D).
+///
+/// The guest reads this and derives the player's velocity itself, so the host
+/// never writes gameplay columns — `fn(&StateView) -> WorldDelta` stays pure.
+/// Booleans are `u8` (0/1); `speed` is an integer unit the guest converts to
+/// fixed-point. `Pod` + serde so it crosses the bridge.
+#[repr(C)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    bytemuck::Pod,
+    bytemuck::Zeroable,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+pub struct PlayerInput {
+    /// 1 = move up.
+    pub up: u8,
+    /// 1 = move down.
+    pub down: u8,
+    /// 1 = move left.
+    pub left: u8,
+    /// 1 = move right.
+    pub right: u8,
+    /// Player speed in fixed units.
+    pub speed: u32,
+}
+
+impl Default for PlayerInput {
+    fn default() -> Self {
+        Self::none()
+    }
+}
+
+impl PlayerInput {
+    /// No input pressed, default speed.
+    pub const fn none() -> Self {
+        PlayerInput {
+            up: 0,
+            down: 0,
+            left: 0,
+            right: 0,
+            speed: 5,
+        }
+    }
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // § 0.0 Shared fixed-point components (no_std, cross-domain)
 //       Canonical Position/Velocity/Color for the SoA bridge (ADR-0001) and
