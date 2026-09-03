@@ -299,8 +299,110 @@ pub mod comp {
     pub const VELOCITY: u32 = 1;
     /// Transform (3D) — spec-21 id 2.
     pub const TRANSFORM: u32 = 2;
+    /// Velocity3D (gameplay, homogeneous actor layout) — engine id 80.
+    pub const VELOCITY3D: u32 = 80;
+    /// Actor (player/NPC tag + physics params) — engine id 81.
+    pub const ACTOR: u32 = 81;
     /// Color — spec-21 engine id 72.
     pub const COLOR: u32 = 72;
+}
+
+/// 3D velocity (gameplay). No serde: raw SoA column, fixed-point.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct Velocity3D {
+    /// Linear velocity (x, y, z).
+    pub linear: [Fx16; 3],
+}
+
+impl Velocity3D {
+    /// Zero velocity.
+    pub const fn zero() -> Self {
+        Velocity3D {
+            linear: [Fx16::from_bits(0); 3],
+        }
+    }
+}
+
+/// Homogeneous gameplay actor tag: kind + deterministic seed + jump/ground.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct Actor {
+    /// 0 = player, 1 = wander, 2 = circle (deterministic NPC behaviours).
+    pub kind: u32,
+    /// Deterministic seed for NPC pseudo-random behaviour.
+    pub seed: u32,
+    /// 1 = on the ground (u32 keeps the struct padding-free/Pod).
+    pub grounded: u32,
+    /// Cooldown ticks before the next jump is allowed.
+    pub jump_cd: u32,
+    /// Horizontal move speed (fixed units/tick).
+    pub move_speed: Fx16,
+    /// Jump impulse (fixed units).
+    pub jump_force: Fx16,
+}
+
+impl Actor {
+    /// A player actor at a given horizontal speed / jump force.
+    pub fn player(move_speed: Fx16, jump_force: Fx16) -> Self {
+        Actor {
+            kind: 0,
+            seed: 0,
+            grounded: 1,
+            jump_cd: 0,
+            move_speed,
+            jump_force,
+        }
+    }
+    /// An NPC actor with the given deterministic seed and behaviour kind.
+    pub fn npc(kind: u32, seed: u32) -> Self {
+        Actor {
+            kind,
+            seed,
+            grounded: 1,
+            jump_cd: 0,
+            move_speed: Fx16::from_num(1),
+            jump_force: Fx16::from_num(1),
+        }
+    }
+}
+
+/// Pure 3D gameplay input (WASD + jump + look deltas) carried as data.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct InputState3D {
+    /// Camera yaw delta (fixed).
+    pub yaw_delta: Fx16,
+    /// Camera pitch delta (fixed).
+    pub pitch_delta: Fx16,
+    /// 1 = forward.
+    pub forward: u8,
+    /// 1 = backward.
+    pub backward: u8,
+    /// 1 = left.
+    pub left: u8,
+    /// 1 = right.
+    pub right: u8,
+    /// 1 = jump.
+    pub jump: u8,
+    /// Explicit padding so the struct is padding-free/Pod.
+    _pad: [u8; 3],
+}
+
+impl InputState3D {
+    /// No input.
+    pub const fn none() -> Self {
+        InputState3D {
+            yaw_delta: Fx16::from_bits(0),
+            pitch_delta: Fx16::from_bits(0),
+            forward: 0,
+            backward: 0,
+            left: 0,
+            right: 0,
+            jump: 0,
+            _pad: [0; 3],
+        }
+    }
 }
 
 /// 3D transform (spec 21, id 2): fixed-point position, rotation (quaternion
