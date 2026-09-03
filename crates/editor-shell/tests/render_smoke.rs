@@ -1,6 +1,14 @@
-//! Headless GPU readback smoke test: render cubes to an offscreen texture and
-//! prove non-background pixels were drawn. No window required (needs a wgpu
-//! adapter — Vulkan/GL/llvmpipe all acceptable). Skips if no adapter exists.
+//! Headless GPU readback smoke tests: render cubes to an offscreen texture and
+//! prove distinct, spatially separated instances are drawn. No window required
+//! (needs a wgpu adapter — Vulkan/GL/llvmpipe all acceptable). Skips if none.
+//!
+//! Two assertions matter:
+//!   1. `scene_draws_some_pixels`   — the pipeline emits *something* (guards
+//!      against a fully-dark viewport, the culling bug we hit before).
+//!   2. `scene_draws_several_separated_instances` — 3 cubes placed along a line
+//!      show up as >= 3 column-runs of lit pixels with empty gaps between them
+//!      (guards against the "one cube only" regression: a single instance, or
+//!      overlapping instances, cannot produce multiple separated column runs).
 
 use openengine_ecs::{Color as EcsColor, Position, Velocity, World};
 use openengine_editor::camera::EditorCamera;
@@ -11,67 +19,56 @@ fn fx(v: f32) -> I16F16 {
     I16F16::from_num(v)
 }
 
-fn build_world() -> World {
-    let mut w = World::new();
-    let add = |w: &mut World, pos: [f32; 3]| {
-        let i = w.spawn(
-            Position {
-                x: fx(0.0),
-                y: fx(0.0),
-            },
-            Velocity {
-                x: fx(0.0),
-                y: fx(0.0),
-            },
-            EcsColor {
-                r: 255,
-                g: 255,
-                b: 255,
-                a: 255,
-            },
-        );
-        w.set_transform(
-            i,
-            openengine_contracts::Transform::at(fx(pos[0]), fx(pos[1]), fx(pos[2])),
-        );
-    };
-    add(&mut w, [0.0, 0.0, 0.0]);
-    add(&mut w, [3.0, 0.0, 0.0]);
-    add(&mut w, [0.0, 0.0, 3.0]);
-    w
+/// Add a white cube entity at a world position.
+fn add_cube(w: &mut World, pos: [f32; 3]) {
+    let i = w.spawn(
+        Position {
+            x: fx(0.0),
+            y: fx(0.0),
+        },
+        Velocity {
+            x: fx(0.0),
+            y: fx(0.0),
+        },
+        EcsColor {
+            r: 255,
+            g: 255,
+            b: 255,
+            a: 255,
+        },
+    );
+    w.set_transform(
+        i,
+        openengine_contracts::Transform::at(fx(pos[0]), fx(pos[1]), fx(pos[2])),
+    );
 }
 
-#[test]
-fn scene_draws_non_background_pixels() {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::all(),
-        ..Default::default()
-    });
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::LowPower,
-        compatible_surface: None,
-        force_fallback_adapter: true,
-    }));
-    let adapter = match adapter {
-        Ok(a) => a,
-        Err(e) => {
-            eprintln!("SKIP: no wgpu adapter available ({e})");
-            return;
-        }
-    };
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("smoke"),
-        required_features: wgpu::Features::empty(),
-        required_limits: wgpu::Limits::default(),
-        memory_hints: wgpu::MemoryHints::default(),
-        trace: wgpu::Trace::Off,
-    }))
-    .expect("device");
+const W: u32 = 256;
+const H: u32 = 256;
 
-    let format = wgpu::TextureFormat::Rgba8Unorm;
+/// Camera aimed at the origin from +Z (yaw = 0), slightly above (pitch).
+fn cam(distance: f32) -> EditorCamera {
+    EditorCamera {
+        focus: glam::Vec3::new(0.0, 0.0, 0.0),
+        distance,
+        yaw: 0.0,
+        pitch: 0.3,
+        fov: 45f32.to_radians(),
+    }
+}
+
+/// Render `world` to an offscreen texture and return the RGBA8 pixels.
+fn render(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &SceneRenderer,
+    world: &World,
+    camera: &EditorCamera,
+    format: wgpu::TextureFormat,
+) -> Vec<u8> {
     let size = wgpu::Extent3d {
-        width: 256,
-        height: 256,
+        width: W,
+        height: H,
         depth_or_array_layers: 1,
     };
     let tex = device.create_texture(&wgpu::TextureDescriptor {
@@ -85,7 +82,7 @@ fn scene_draws_non_background_pixels() {
         view_formats: &[],
     });
     let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
-    let bytes = 256u64 * 256 * 4;
+    let bytes = (W * H * 4) as u64;
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("readback"),
         size: bytes,
@@ -93,22 +90,10 @@ fn scene_draws_non_background_pixels() {
         mapped_at_creation: false,
     });
 
-    let world = build_world();
-    let camera = EditorCamera {
-        focus: glam::Vec3::new(1.5, 0.5, 1.5),
-        distance: 12.0,
-        yaw: 0.6,
-        pitch: 0.35,
-        fov: 45f32.to_radians(),
-    };
-    let renderer = SceneRenderer::new(&device, &queue, format);
-
-    // Draw cubes into the offscreen texture.
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-    renderer.draw(&device, &queue, &mut enc, &view, &world, &camera, 1.0);
+    renderer.draw(device, queue, &mut enc, &view, world, camera, 1.0);
     queue.submit(std::iter::once(enc.finish()));
 
-    // Copy to the readback buffer.
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
     enc.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {
@@ -121,8 +106,8 @@ fn scene_draws_non_background_pixels() {
             buffer: &readback,
             layout: wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(256 * 4),
-                rows_per_image: Some(256),
+                bytes_per_row: Some(W * 4),
+                rows_per_image: Some(H),
             },
         },
         size,
@@ -133,18 +118,117 @@ fn scene_draws_non_background_pixels() {
     slice.map_async(wgpu::MapMode::Read, |_| {});
     let _ = device.poll(wgpu::PollType::Wait);
     let data = slice.get_mapped_range();
-    let mut non_bg = 0usize;
-    for px in data.chunks_exact(4) {
-        // Background clear is roughly (0.05,0.06,0.09)->(13,15,23); count pixels
-        // that are clearly brighter/coloured (drawn cubes).
-        if px[0] > 60 || px[1] > 60 || px[2] > 60 {
-            non_bg += 1;
+    let out = data.to_vec();
+    drop(data);
+    out
+}
+
+/// Return (col_runs, pixel_count). A "lit column" is one where at least one
+/// pixel is clearly non-background. `col_runs` is the number of contiguous
+/// groups of lit columns separated by at least `gap` empty columns.
+fn profile(pixels: &[u8]) -> (Vec<(usize, usize)>, usize) {
+    let mut lit_cols = vec![false; W as usize];
+    let mut count = 0usize;
+    for (pix_i, chunk) in pixels.chunks_exact(4).enumerate() {
+        let x = pix_i % W as usize;
+        if chunk[0] > 60 || chunk[1] > 60 || chunk[2] > 60 {
+            lit_cols[x] = true;
+            count += 1;
         }
     }
-    drop(data);
+    // Collapse lit columns into runs with a gap tolerance of 3 empty columns.
+    let gap = 3usize;
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    let mut start: Option<usize> = None;
+    let mut last_lit: usize = 0;
+    for (x, is_lit) in lit_cols.iter().enumerate() {
+        if *is_lit {
+            if start.is_none() {
+                start = Some(x);
+            }
+            last_lit = x;
+        } else if let Some(s) = start {
+            if x - last_lit > gap {
+                runs.push((s, last_lit));
+                start = None;
+            }
+        }
+    }
+    if let Some(s) = start {
+        runs.push((s, last_lit));
+    }
+    (runs, count)
+}
+
+fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::all(),
+        ..Default::default()
+    });
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::LowPower,
+        compatible_surface: None,
+        force_fallback_adapter: true,
+    }))
+    .ok()?;
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("smoke"),
+        required_features: wgpu::Features::empty(),
+        required_limits: wgpu::Limits::default(),
+        memory_hints: wgpu::MemoryHints::default(),
+        trace: wgpu::Trace::Off,
+    }))
+    .ok()?;
+    Some((device, queue))
+}
+
+#[test]
+fn scene_draws_some_pixels() {
+    let Some((device, queue)) = device() else {
+        eprintln!("SKIP: no wgpu adapter available");
+        return;
+    };
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let renderer = SceneRenderer::new(&device, &queue, format);
+
+    let mut w = World::new();
+    add_cube(&mut w, [0.0, 0.0, 0.0]);
+    add_cube(&mut w, [3.0, 0.0, 0.0]);
+    add_cube(&mut w, [0.0, 0.0, 3.0]);
+
+    let pixels = render(&device, &queue, &renderer, &w, &cam(12.0), format);
+    let (_, count) = profile(&pixels);
     assert!(
-        non_bg > 0,
-        "renderer produced NO non-background pixels ({non_bg}) — pipeline/camera broken"
+        count > 0,
+        "renderer produced NO non-background pixels ({count}) — pipeline/camera broken"
     );
-    println!("render_smoke OK: {non_bg} non-background pixels drawn");
+    println!("render_smoke[some]: {count} lit pixels");
+}
+
+#[test]
+fn scene_draws_several_separated_instances() {
+    let Some((device, queue)) = device() else {
+        eprintln!("SKIP: no wgpu adapter available");
+        return;
+    };
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let renderer = SceneRenderer::new(&device, &queue, format);
+
+    // Three cubes well separated along the camera's right axis (world X).
+    // Symmetric around the origin, camera looking down -Z from distance 16.
+    let mut w = World::new();
+    add_cube(&mut w, [-5.0, 0.0, 0.0]);
+    add_cube(&mut w, [0.0, 0.0, 0.0]);
+    add_cube(&mut w, [5.0, 0.0, 0.0]);
+
+    let camera = cam(16.0);
+    let pixels = render(&device, &queue, &renderer, &w, &camera, format);
+    let (runs, count) = profile(&pixels);
+
+    // A single instance, or overlapping instances, yields <= ~2 column runs at
+    // most; three genuinely separated cubes must yield >= 3 separated runs.
+    let msg =
+        format!("expected >=3 separated column-runs for 3 cubes, got {runs:?} ({count} lit px)");
+    assert!(runs.len() >= 3, "{msg}");
+    println!("render_smoke[separated]: {count} lit px across {runs:?}");
 }

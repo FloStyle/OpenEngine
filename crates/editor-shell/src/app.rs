@@ -24,6 +24,11 @@ pub struct EditorApp {
     pub viewport_rect: Option<egui::Rect>,
     /// Running frame counter used by the play sim.
     pub frame: u64,
+    /// Held movement keys captured each frame from egui (WASD).
+    pub keys: [bool; 5], // up, down, left, right, jump
+    /// Vertical velocity of the player used by the jump/gravity sim.
+    pub player_vy: f32,
+    pub nav_focus: bool,
 }
 
 fn x(v: f32) -> I16F16 {
@@ -86,6 +91,9 @@ impl EditorApp {
             egui_ctx: Context::default(),
             viewport_rect: None,
             frame: 0,
+            keys: [false; 5],
+            player_vy: 0.0,
+            nav_focus: true,
         };
         // Default framing so the spawned cubes (x in 0..25) are visible.
         app.camera.focus = glam::Vec3::new(12.5, 0.5, 0.0);
@@ -106,30 +114,141 @@ impl EditorApp {
         };
         let n = world.entity_count();
         let frame = self.frame as f32;
-        let mut delta = WorldDelta::default();
+        let transforms = world
+            .get_transforms()
+            .map(|s| s[..n].to_vec())
+            .unwrap_or_default();
+        let mut out: Vec<Transform> = Vec::with_capacity(n);
+
+        let k = self.keys;
+        let mut px = if n > 0 {
+            transforms[0].position[0].to_num::<f32>()
+        } else {
+            12.5
+        };
+        let mut pz = if n > 0 {
+            transforms[0].position[2].to_num::<f32>()
+        } else {
+            0.0
+        };
+        let speed = 0.3;
+        if k[0] {
+            pz -= speed;
+        }
+        if k[1] {
+            pz += speed;
+        }
+        if k[2] {
+            px -= speed;
+        }
+        if k[3] {
+            px += speed;
+        }
+        if k[4] && self.player_vy == 0.0 {
+            self.player_vy = 5.0;
+        }
+        self.player_vy -= 11.0 / 60.0;
+        let mut py = if n > 0 {
+            transforms[0].position[1].to_num::<f32>()
+        } else {
+            0.0
+        };
+        py += self.player_vy / 60.0;
+        if py <= 0.0 && self.player_vy < 0.0 {
+            py = 0.0;
+            self.player_vy = 0.0;
+        }
+
         for i in 0..n {
-            let ang = frame * 0.02 + (i as f32) * 0.5;
-            let x = 12.5 + 13.0 * ang.cos();
-            let y = 0.5 + 0.5 * (frame * 0.05).sin();
-            let z = 6.0 * ang.sin();
-            let t = Transform::at(
-                I16F16::from_num(x),
-                I16F16::from_num(y),
-                I16F16::from_num(z),
-            );
+            if i == 0 {
+                out.push(Transform::at(
+                    I16F16::from_num(px),
+                    I16F16::from_num(py),
+                    I16F16::from_num(pz),
+                ));
+            } else {
+                let ang = frame * 0.02 + (i as f32) * 0.5;
+                let x = 12.5 + 13.0 * ang.cos();
+                let y = 0.5 + 0.5 * (frame * 0.05).sin();
+                let z = 6.0 * ang.sin();
+                out.push(Transform::at(
+                    I16F16::from_num(x),
+                    I16F16::from_num(y),
+                    I16F16::from_num(z),
+                ));
+            }
+        }
+        let mut delta = WorldDelta::default();
+        for (i, t) in out.iter().enumerate() {
             delta.writes.push(ColumnWrite {
                 archetype: ArchetypeId(0),
                 component: ComponentId(comp::TRANSFORM),
                 indices: vec![i as u32],
-                payload: bytemuck::bytes_of(&t).to_vec(),
+                payload: bytemuck::bytes_of(t).to_vec(),
             });
         }
         world.apply_delta(&delta);
+
+        // Third-person follow: camera looks at the player.
+        self.camera.focus = glam::Vec3::new(px, py + 1.2, pz);
+        self.camera.distance = 12.0;
+        self.camera.pitch = 0.35;
+        self.camera.yaw = 0.6;
         self.frame += 1;
+    }
+
+    /// Orbit/pan/zoom the camera from viewport mouse events (egui).
+    pub fn handle_nav(&mut self, ctx: &egui::Context) {
+        let Some(rect) = self.viewport_rect else {
+            return;
+        };
+        ctx.input(|i| {
+            let over = i.pointer.hover_pos().is_some_and(|p| rect.contains(p));
+            if !over {
+                return;
+            }
+            let scroll = i.raw_scroll_delta.y;
+            if scroll != 0.0 {
+                self.camera.zoom(scroll * self.camera.distance * 0.001);
+            }
+            let dragging =
+                (i.modifiers.alt && i.pointer.primary_down()) || i.pointer.secondary_down();
+            if dragging {
+                let d = i.pointer.delta();
+                self.camera.orbit(-d.x * 0.005, -d.y * 0.005);
+            }
+            if i.pointer.middle_down() {
+                let d = i.pointer.delta();
+                let fwd = (self.camera.focus - self.camera.eye()).normalize();
+                let right = fwd.cross(glam::Vec3::Y).normalize();
+                let up = right.cross(fwd).normalize();
+                self.camera.pan(
+                    right * (-d.x * self.camera.distance),
+                    up * (d.y * self.camera.distance),
+                );
+            }
+        });
+        // F = frame scene (Edit mode convenience).
+        if ctx.input(|i| i.key_pressed(egui::Key::F)) {
+            self.camera.focus = glam::Vec3::new(12.5, 0.5, 0.0);
+            self.camera.distance = 34.0;
+        }
     }
 
     /// Render the toolbar + hierarchy + inspector + reserve the central viewport.
     pub fn ui(&mut self, ctx: &egui::Context) {
+        // Capture keyboard (WASD + Space) into a compact array.
+        let (up, down, left, right, jump) = ctx.input(|i| {
+            (
+                i.key_down(egui::Key::W) || i.key_down(egui::Key::ArrowUp),
+                i.key_down(egui::Key::S) || i.key_down(egui::Key::ArrowDown),
+                i.key_down(egui::Key::A) || i.key_down(egui::Key::ArrowLeft),
+                i.key_down(egui::Key::D) || i.key_down(egui::Key::ArrowRight),
+                i.key_down(egui::Key::Space),
+            )
+        });
+        self.keys = [up, down, left, right, jump];
+        self.handle_nav(ctx);
         self.toolbar(ctx);
         self.hierarchy(ctx);
         self.inspector(ctx);
