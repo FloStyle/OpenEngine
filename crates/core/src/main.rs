@@ -175,13 +175,13 @@ fn upload_mesh(device: &wgpu::Device, queue: &wgpu::Queue, m: &Mesh) -> GpuMesh 
     let vbuf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("vbuf"),
         size: (m.vertices.len() * std::mem::size_of::<Vertex>()) as u64,
-        usage: wgpu::BufferUsages::VERTEX,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
     let ibuf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("ibuf"),
         size: (m.indices.len() * 4) as u64,
-        usage: wgpu::BufferUsages::INDEX,
+        usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
     queue.write_buffer(&vbuf, 0, bytemuck::cast_slice(&m.vertices));
