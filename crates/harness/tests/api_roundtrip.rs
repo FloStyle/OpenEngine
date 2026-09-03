@@ -150,3 +150,68 @@ fn server_binds_ephemeral_and_answers_health() {
         "no ok: {buf}"
     );
 }
+
+#[test]
+fn prove_reports_determinism() {
+    let mut s = HarnessState::new();
+    post(
+        &mut s,
+        "/spawn",
+        r#"{"transform":[0,0,0],"color":[255,255,255,255]}"#,
+    );
+    post(
+        &mut s,
+        "/spawn",
+        r#"{"transform":[3,0,0],"color":[1,2,3,255]}"#,
+    );
+    let (c, r) = post(&mut s, "/prove", r#"{"n":200}"#);
+    assert_eq!(c, 200, "prove failed: {r}");
+    assert_eq!(r["equal"], true, "identical fresh replays must match: {r}");
+    assert_eq!(r["hash_a"], r["hash_b"]);
+}
+
+#[test]
+fn transaction_applies_batch_atomically() {
+    let mut s = HarnessState::new();
+    let (c, r) = post(
+        &mut s,
+        "/transaction",
+        r#"{"ops":[
+            {"path":"/spawn","body":{"transform":[1,0,0],"color":[255,0,0,255]}},
+            {"path":"/spawn","body":{"transform":[2,0,0],"color":[0,255,0,255]}}
+        ]}"#,
+    );
+    assert_eq!(c, 200, "transaction failed: {r}");
+    assert_eq!(r["applied"], 2);
+    assert_eq!(s.entity_count(), 2);
+}
+
+#[test]
+fn transaction_rolls_back_on_failing_op() {
+    let mut s = HarnessState::new();
+    post(
+        &mut s,
+        "/spawn",
+        r#"{"transform":[0,0,0],"color":[255,255,255,255]}"#,
+    );
+    let before = s.entity_count();
+    // Op 1 succeeds (spawn), op 2 fails (despawn of nonexistent entity 99).
+    let (c, r) = post(
+        &mut s,
+        "/transaction",
+        r#"{"ops":[
+            {"path":"/spawn","body":{"transform":[9,9,9],"color":[0,0,0,255]}},
+            {"path":"/despawn","body":{"entity":99}}
+        ]}"#,
+    );
+    assert_eq!(c, 409, "expected rollback, got: {r}");
+    assert_eq!(
+        s.entity_count(),
+        before,
+        "failed transaction must roll back fully"
+    );
+    // World unchanged: still one entity at origin.
+    let (_, o) = get(&mut s, "/observe");
+    assert_eq!(o["entity_count"], before);
+    assert_eq!(o["entities"][0]["transform"][0], 0.0);
+}

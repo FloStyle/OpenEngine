@@ -3,8 +3,9 @@
 #
 # Usage:
 #   bash scripts/harness.sh <subcommand> [json]
-#   subcommands: health | observe | spec | hash | spawn <json> | despawn <json>
-#                | set <json> | tick <json> | load <json>
+#   subcommands: health | observe | spec | hash
+#                spawn <json> | despawn <json> | set <json> | tick <json> |
+#                load <json> | prove <json> | tx <json>
 #
 # Defaults to http://127.0.0.1:8080 ; override with OPENENGINE_HARNESS_URL.
 set -euo pipefail
@@ -25,6 +26,8 @@ case "$cmd" in
   set)       post /set ;;
   tick)      post /tick ;;
   load)      post /load_wasm ;;
-  *) echo "usage: $0 health|spec|observe|hash|spawn|despawn|set|tick|load [json]" >&2; exit 2 ;;
+  prove)     post /prove ;;
+  tx)        post /transaction ;;
+  *) echo "usage: $0 health|spec|observe|hash|spawn|despawn|set|tick|load|prove|tx [json]" >&2; exit 2 ;;
 esac
 echo

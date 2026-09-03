@@ -15,6 +15,8 @@ pub struct HarnessState {
     tick: u64,
     /// Optional wasm guest; when present `/tick` runs the real Domain B logic.
     guest: Option<WasmGuest>,
+    /// Path of the loaded logic module, so a duplicate can spawn a fresh guest.
+    wasm_path: Option<String>,
 }
 
 /// Compact snapshot of one entity for `/observe`.
@@ -45,7 +47,31 @@ impl HarnessState {
             world: World::new(),
             tick: 0,
             guest: None,
+            wasm_path: None,
         }
+    }
+
+    /// Deep, independent copy of this state (world + tick). The wasm guest is
+    /// re-instantiated fresh from the same module so a duplicate is truly
+    /// independent and deterministic (used by `/transaction` and `/prove`).
+    pub fn duplicate(&self) -> HarnessState {
+        let guest = self
+            .wasm_path
+            .as_deref()
+            .and_then(|p| WasmGuest::load(p).ok());
+        HarnessState {
+            world: self.world.clone_state(),
+            tick: self.tick,
+            guest,
+            wasm_path: self.wasm_path.clone(),
+        }
+    }
+
+    /// Replace this state's world + tick with `src`'s (deep copy). Used to
+    /// roll back a failed transaction.
+    pub fn overwrite_from(&mut self, src: &HarnessState) {
+        self.world = src.world.clone_state();
+        self.tick = src.tick;
     }
 
     pub fn entity_count(&self) -> usize {
@@ -239,6 +265,7 @@ impl HarnessState {
     /// Load a wasm logic module that exposes `openengine_gameplay_tick`.
     pub fn load_wasm(&mut self, path: &str) -> Result<(), String> {
         self.guest = Some(WasmGuest::load(path).map_err(|e| format!("load wasm: {e}"))?);
+        self.wasm_path = Some(path.to_string());
         Ok(())
     }
 

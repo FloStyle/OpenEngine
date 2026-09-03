@@ -40,7 +40,7 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
             "status": "ok",
             "version": VERSION,
             "headless": true,
-            "capabilities": ["observe", "spawn", "despawn", "set", "tick", "hash", "load_wasm"],
+            "capabilities": ["observe", "spawn", "despawn", "set", "tick", "hash", "load_wasm", "prove", "transaction"],
         })),
         ("GET", "/spec") => ok(json!({
             "service": "openengine-harness",
@@ -54,7 +54,9 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
                 {"method":"POST","path":"/set","body":"{\"entity\":i,\"component\":\"transform|scale|color\",\"value\":[...]}"},
                 {"method":"POST","path":"/tick","body":"{\"n\":100}"},
                 {"method":"GET","path":"/hash","desc":"determinism hash"},
-                {"method":"POST","path":"/load_wasm","body":"{\"path\":\"...\"}"}
+                {"method":"POST","path":"/load_wasm","body":"{\"path\":\"...\"}"},
+                {"method":"POST","path":"/prove","body":"{\"n\":100}","desc":"determinism PASS/FAIL over two fresh states"},
+                {"method":"POST","path":"/transaction","body":"{\"ops\":[{method,path,body},...]}","desc":"atomic batch, rollback on any failing op"}
             ]
         })),
         ("GET", "/hash") => {
@@ -161,6 +163,60 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
                 Ok(()) => ok(json!({ "ok": true, "engine": "wasm" })),
                 Err(e) => err(500, e),
             }
+        }
+        // ── Safety seams (spec 51/52): prove determinism + atomic transaction ──
+        ("POST", "/prove") => {
+            let v: Value = match serde_json::from_slice(body) {
+                Ok(x) => x,
+                Err(e) => return err(400, format!("bad json: {e}")),
+            };
+            let n = v
+                .get("n")
+                .and_then(|x| x.as_u64())
+                .unwrap_or(100)
+                .min(100_000);
+            // Two independent, fresh states (each with its own guest if loaded)
+            // replay the same deterministic tick sequence.
+            let mut a = state.duplicate();
+            let mut b = state.duplicate();
+            if let Err(e) = a.tick_n(n) {
+                return err(500, format!("prove run A failed: {e}"));
+            }
+            if let Err(e) = b.tick_n(n) {
+                return err(500, format!("prove run B failed: {e}"));
+            }
+            let ha = hex_hash(a.hash());
+            let hb = hex_hash(b.hash());
+            ok(json!({ "equal": ha == hb, "hash_a": ha, "hash_b": hb, "ticks": n }))
+        }
+        ("POST", "/transaction") => {
+            let v: Value = match serde_json::from_slice(body) {
+                Ok(x) => x,
+                Err(e) => return err(400, format!("bad json: {e}")),
+            };
+            let ops = match v.get("ops").and_then(|x| x.as_array()) {
+                Some(o) => o,
+                None => return err(400, "missing 'ops' array"),
+            };
+            // Snapshot; on any failing op, roll the whole batch back.
+            let checkpoint = state.duplicate();
+            for (i, op) in ops.iter().enumerate() {
+                let m = op.get("method").and_then(|x| x.as_str()).unwrap_or("POST");
+                let p = op.get("path").and_then(|x| x.as_str()).unwrap_or("");
+                let body_bytes = match op.get("body") {
+                    Some(b) => serde_json::to_vec(b).unwrap_or_else(|_| b"{}".to_vec()),
+                    None => b"{}".to_vec(),
+                };
+                let (code, res) = dispatch(state, m, p, &body_bytes);
+                if code >= 400 {
+                    state.overwrite_from(&checkpoint);
+                    return err(
+                        409,
+                        format!("op {i} failed ({}); rolled back", res["error"]),
+                    );
+                }
+            }
+            ok(json!({ "ok": true, "applied": ops.len(), "entity_count": state.entity_count() }))
         }
         _ => err(404, format!("no route: {method} {path}")),
     }
