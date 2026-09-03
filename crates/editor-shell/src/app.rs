@@ -28,6 +28,9 @@ pub struct EditorApp {
     pub keys: [bool; 5], // up, down, left, right, jump
     /// Vertical velocity of the player used by the jump/gravity sim.
     pub player_vy: f32,
+    /// Whether a Play session is currently following the player with a camera
+    /// already initialized. Reset when leaving Play so re-entry re-frames once.
+    pub follow_active: bool,
     pub nav_focus: bool,
 }
 
@@ -93,6 +96,7 @@ impl EditorApp {
             frame: 0,
             keys: [false; 5],
             player_vy: 0.0,
+            follow_active: false,
             nav_focus: true,
         };
         // Default framing so the spawned cubes (x in 0..25) are visible.
@@ -107,11 +111,22 @@ impl EditorApp {
     /// Deterministic orbit so cubes visibly move; edits are never touched.
     pub fn step_simulation(&mut self) {
         if self.state.mode != EditorMode::Playing {
+            // Not playing: the follow session is over; next Play re-frames once.
+            self.follow_active = false;
             return;
         }
         let Some(world) = self.state.mutable_world() else {
             return;
         };
+        // Entering Play: adopt a close third-person follow view exactly once, so
+        // the player is framed. Afterwards the user keeps free orbit/zoom (the
+        // camera only re-tracks the player position, never the angle/distance).
+        if !self.follow_active {
+            self.camera.distance = 12.0;
+            self.camera.pitch = 0.35;
+            self.camera.yaw = 0.6;
+            self.follow_active = true;
+        }
         let n = world.entity_count();
         let frame = self.frame as f32;
         let transforms = world
@@ -189,11 +204,9 @@ impl EditorApp {
         }
         world.apply_delta(&delta);
 
-        // Third-person follow: camera looks at the player.
+        // Third-person follow: track the player position so it stays framed, but
+        // never touch distance/pitch/yaw — the user's orbit/zoom is preserved.
         self.camera.focus = glam::Vec3::new(px, py + 1.2, pz);
-        self.camera.distance = 12.0;
-        self.camera.pitch = 0.35;
-        self.camera.yaw = 0.6;
         self.frame += 1;
     }
 
