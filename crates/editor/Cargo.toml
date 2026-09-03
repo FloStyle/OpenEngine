@@ -7,13 +7,14 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-egui.workspace = true
 openengine-contracts = { workspace = true }
-openengine-ecs = { path = "../ecs" }
+openengine-ecs = { workspace = true }
+openengine-math = { workspace = true }
+bytemuck.workspace = true
+glam.workspace = true
 
 [features]
-# GPU-backend integration is gated so headless CI can build the editor without
-# a Vulkan driver. Add "glow"/wgpu renderer feature when the editor milestone lands.
+# The egui/gpu shell is deferred until wgpu/egui-wgpu versions align.
 default = []
 
 [lints]

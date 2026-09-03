@@ -8,6 +8,7 @@ use bytemuck::Pod;
 ///
 /// Component ids map to `Vec<u8>` byte columns of `element_size * capacity`.
 /// Typed views are produced with safe `bytemuck::cast_slice`, never `transmute`.
+#[derive(Clone)]
 pub struct ArchetypeStorage {
     /// ComponentId → contiguous raw column bytes (length `element_size * capacity`).
     columns: HashMap<u32, Vec<u8>>,

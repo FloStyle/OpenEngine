@@ -247,8 +247,40 @@ pub mod comp {
     pub const POSITION: u32 = 0;
     /// Velocity (2D) — spec-21 id 1.
     pub const VELOCITY: u32 = 1;
+    /// Transform (3D) — spec-21 id 2.
+    pub const TRANSFORM: u32 = 2;
     /// Color — spec-21 engine id 72.
     pub const COLOR: u32 = 72;
+}
+
+/// 3D transform (spec 21, id 2): fixed-point position, rotation (quaternion
+/// x,y,z,w) and scale. Shared by the host editor (Domain A) and, via the ABI,
+/// usable by deterministic logic. 40 bytes, `#[repr(C)] Pod`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct Transform {
+    /// World position (x, y, z).
+    pub position: [Fx16; 3],
+    /// Rotation quaternion (x, y, z, w). Identity = (0,0,0,1).
+    pub rotation: [Fx16; 4],
+    /// Scale (x, y, z).
+    pub scale: [Fx16; 3],
+}
+
+impl Transform {
+    /// Identity transform at a fixed-point position.
+    pub fn at(x: Fx16, y: Fx16, z: Fx16) -> Self {
+        Transform {
+            position: [x, y, z],
+            rotation: [
+                Fx16::from_num(0),
+                Fx16::from_num(0),
+                Fx16::from_num(0),
+                Fx16::from_num(1),
+            ],
+            scale: [Fx16::from_num(1), Fx16::from_num(1), Fx16::from_num(1)],
+        }
+    }
 }
 
 /// 2D position, fixed-point, `#[repr(C)] Pod`.

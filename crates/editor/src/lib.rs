@@ -1,50 +1,23 @@
 //! # Domain A — `openengine-editor`
 //!
-//! The editor is **not** a separate application: it is a **system inside the
-//! ECS**, exactly like any gameplay system, but running on the host side. It
-//! observes a [`StateView`] and emits [`DeferredCommand`]s back through the same
-//! pure pipeline — no special-casing, no privileged memory access.
+//! The editor runs on the host side (Domain A). This is the **headless editor
+//! core** (no egui, no GPU, testable in CI): Edit/Play isolation (spec 22),
+//! undoable Commands (spec 23), camera + ray picking (spec 24), and drag
+//! translate. The egui/gpu shell (panels over the 3D viewport) is deferred
+//! until the wgpu/egui-wgpu versions align; it will sit on top of this core.
 //!
-//! Because the editor is host-resident it may do things gameplay logic cannot:
-//! open windows, talk to the file system, hot-reload Wasm, and render debug
-//! gizmos. That privilege is why it is Domain A and never compiled into the
-//! guest.
-//!
-//! ## Scaffold state
-//! UI panels, docking and the inspector come in the editor milestone.
+//! Everything here is pure host logic over the ECS `World` (fixed-point
+//! `Transform`, id 2) and `glam` `f32` only inside camera/picking math.
 
 #![deny(missing_docs)]
 
-/// Top-level editor context that owns the `egui` state for the frame loop.
-pub struct EditorContext {
-    /// egui's per-frame context handle.
-    pub egui_ctx: egui::Context,
-}
+pub mod camera;
+pub mod commands;
+pub mod selection;
+pub mod state;
+pub mod translate;
 
-impl EditorContext {
-    /// Construct an editor context. Skeleton.
-    pub fn new() -> Self {
-        EditorContext {
-            egui_ctx: egui::Context::default(),
-        }
-    }
-}
-
-impl Default for EditorContext {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// The editor's per-frame "system" entry — mirrors a pure system but is allowed
-/// host privileges. Skeleton; panels arrive in the editor milestone.
-#[allow(dead_code)]
-pub fn run_editor_system(ctx: &mut EditorContext, egui_input: &egui::RawInput) {
-    let _output = ctx.egui_ctx.run(egui_input.clone(), |ctx| {
-        egui::Window::new("OpenEngine Inspector").show(ctx, |_ui| {
-            // placeholder: real ECS inspector panels here
-        });
-    });
-    // `_output` includes platform_ output (needs repaint, cursor icon, ...)
-    // that the renderer consumes. Scaffold ignores it for now.
-}
+pub use commands::{Command, ModifyTransformCommand, UndoRedoManager};
+pub use selection::{pick, SelectionModel};
+pub use state::{EditorMode, EditorState};
+pub use translate::ray_ground_plane;
