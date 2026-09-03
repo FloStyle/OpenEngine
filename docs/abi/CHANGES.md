@@ -3,6 +3,21 @@
 Rule: every entry records *who*, *what*, *why*, and a bumped `ARCH_VERSION`.
 `ARCH_VERSION` never goes backwards.
 
+## v2 addendum — gameplay wasm bridge (additive, `ARCH_VERSION` stays 2)
+
+Additive only — no existing layout or type changed, so the ABI wall for
+already-shipped logic modules is intact.
+
+- `GameplayInputWire` — fixed 16-byte `Pod` wire form of `InputState3D`
+  (5 flag bytes + 3 pad + `yaw_bits`/`pitch_bits` as `i32`). `Fx16` has no serde
+  impl, so the two fixed deltas cross the wasm boundary as raw bits instead of
+  through `postcard`. Conversion is via `From<InputState3D>` / `From<GameplayInputWire>`.
+- New guest export `openengine_gameplay_tick(input_ptr, input_len, out_ptr,
+  out_cap)` — runs the Phase E `gameplay_tick` (WASD + jump + gravity, NPC
+  wander/circle/chase). Input layout:
+  `[frame u64 LE][GameplayInputWire (16)][postcard columns][Transform |
+  Velocity3D | Actor arena]`. Host: `openengine-core::wasm_gameplay_host::WasmGameplayHost`.
+
 ## v2 addendum — additive ABI helper types (non-breaking)
 
 Added for full-engine feature parity (specs 14–16, 24, 46–47). Purely additive —
