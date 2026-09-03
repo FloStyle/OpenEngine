@@ -85,6 +85,9 @@ pub mod native_movement;
 /// Wasm SoA movement host — PoC Phase 3 (ADR-0001 bridge).
 pub mod wasm_move_host;
 
+/// Wasm 3D gameplay host — Phase E (ADR-0001 gameplay bridge).
+pub mod wasm_gameplay_host;
+
 /// Cross-crate ABI handshake used by tests and CI. The host refuses to boot on
 /// a mismatch between the linked `ARCH_VERSION` and the current ABI constant.
 pub fn abi_is_current() -> bool {

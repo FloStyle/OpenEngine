@@ -369,7 +369,9 @@ impl Actor {
 
 /// Pure 3D gameplay input (WASD + jump + look deltas) carried as data.
 /// Not `Pod` (host-side input record; crosses the guest via a compact wire
-/// form in the bridge, not as an SoA column).
+/// form in the bridge, not as an SoA column). `Fx16` has no serde impl, so the
+/// fixed deltas are serialized as their raw `i32` bits below; this only shapes
+/// the portable wire encoding, never the in-memory layout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InputState3D {
     /// 1 = forward.
@@ -399,6 +401,48 @@ impl InputState3D {
             jump: 0,
             yaw_delta: Fx16::from_bits(0),
             pitch_delta: Fx16::from_bits(0),
+        }
+    }
+}
+
+/// Fixed, padding-free wire form of [`InputState3D`] used by the gameplay
+/// bridge. 16 bytes: 5 flag bytes + 3 pad, then the two fixed deltas as raw
+/// `i32` bits. `Pod` on both the host and the no_std guest so the exact bytes
+/// cross the wasm boundary deterministically (no serde/field-name dependency).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GameplayInputWire {
+    /// forward, backward, left, right, jump.
+    pub flags: [u8; 5],
+    /// Padding to keep the following `i32`s 4-aligned (keeps the struct Pod).
+    pub pad: [u8; 3],
+    /// `yaw_delta` as raw fixed bits.
+    pub yaw_bits: i32,
+    /// `pitch_delta` as raw fixed bits.
+    pub pitch_bits: i32,
+}
+
+impl From<InputState3D> for GameplayInputWire {
+    fn from(i: InputState3D) -> Self {
+        GameplayInputWire {
+            flags: [i.forward, i.backward, i.left, i.right, i.jump],
+            pad: [0; 3],
+            yaw_bits: i.yaw_delta.to_bits(),
+            pitch_bits: i.pitch_delta.to_bits(),
+        }
+    }
+}
+
+impl From<GameplayInputWire> for InputState3D {
+    fn from(w: GameplayInputWire) -> Self {
+        InputState3D {
+            forward: w.flags[0],
+            backward: w.flags[1],
+            left: w.flags[2],
+            right: w.flags[3],
+            jump: w.flags[4],
+            yaw_delta: Fx16::from_bits(w.yaw_bits),
+            pitch_delta: Fx16::from_bits(w.pitch_bits),
         }
     }
 }

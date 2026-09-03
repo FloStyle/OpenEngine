@@ -18,6 +18,7 @@ wgpu.workspace = true
 winit.workspace = true
 openengine-editor = { path = "../editor" }
 openengine-ecs = { path = "../ecs" }
+openengine-core = { path = "../core" }
 openengine-contracts = { workspace = true }
 openengine-math = { workspace = true }
 bytemuck.workspace = true

@@ -3,9 +3,21 @@
 //! Drives the validated headless editor core (`openengine-editor`): Edit/Play,
 //! undo/redo commands, selection/picking, orbit camera. Panels only here — the
 //! 3D viewport is rendered by the shell's wgpu pass (in `main.rs`).
+//!
+//! **Play mode runs the real Domain B logic in the wasm sandbox** via
+//! [`WasmGameplayHost`] (`openengine_gameplay_tick`), at a fixed 60 Hz
+//! timestep for determinism. If the `logic.wasm` module is unavailable it falls
+//! back to a lightweight native placeholder so the shell never crashes.
+
+use std::path::Path;
+use std::time::Instant;
 
 use egui::Context;
-use openengine_contracts::{comp, ArchetypeId, ColumnWrite, ComponentId, Transform, WorldDelta};
+use openengine_contracts::{
+    comp, Actor, ArchetypeId, ColumnWrite, ComponentId, InputState3D, Transform, Velocity3D,
+    WorldDelta,
+};
+use openengine_core::wasm_gameplay_host::WasmGameplayHost;
 use openengine_ecs::{Color as EcsColor, Position, Velocity, World};
 use openengine_editor::camera::EditorCamera;
 use openengine_editor::commands::{ModifyTransformCommand, UndoRedoManager};
@@ -22,16 +34,44 @@ pub struct EditorApp {
     pub egui_ctx: Context,
     /// Rect of the last 3D viewport (central panel), set each frame by `ui`.
     pub viewport_rect: Option<egui::Rect>,
-    /// Running frame counter used by the play sim.
+    /// Running deterministic guest tick counter used by the play loop.
     pub frame: u64,
-    /// Held movement keys captured each frame from egui (WASD).
-    pub keys: [bool; 5], // up, down, left, right, jump
-    /// Vertical velocity of the player used by the jump/gravity sim.
+    /// Held movement keys captured each frame from egui (WASD + Space).
+    /// Order: up, down, left, right, jump.
+    pub keys: [bool; 5],
+    /// Vertical velocity of the player used by the NATIVE fallback sim.
     pub player_vy: f32,
     /// Whether a Play session is currently following the player with a camera
     /// already initialized. Reset when leaving Play so re-entry re-frames once.
     pub follow_active: bool,
-    pub nav_focus: bool,
+    /// Lazy wasm gameplay backend (loaded once on the first Play).
+    pub backend: PlayBackend,
+}
+
+/// Loads + holds the guest gameplay module and paces ticks at a fixed 60 Hz.
+pub struct PlayBackend {
+    /// Loaded guest host, if the wasm module was available.
+    pub host: Option<WasmGameplayHost>,
+    /// True when the wasm module is absent/failed → run the native fallback.
+    pub fallback: bool,
+    /// Have we attempted to load the module yet?
+    loaded: bool,
+    /// Wall-clock accumulator for the fixed-timestep (60 Hz) scheduler.
+    accum: f64,
+    /// Last wall-clock sample.
+    last: Option<Instant>,
+}
+
+impl Default for PlayBackend {
+    fn default() -> Self {
+        PlayBackend {
+            host: None,
+            fallback: false,
+            loaded: false,
+            accum: 0.0,
+            last: None,
+        }
+    }
 }
 
 fn x(v: f32) -> I16F16 {
@@ -42,9 +82,26 @@ fn tf(pos: [f32; 3]) -> Transform {
     Transform::at(x(pos[0]), x(pos[1]), x(pos[2]))
 }
 
+/// Resolve the Domain B logic module. Honors `OPENENGINE_WASM_PATH`; falls back
+/// to the dev-layout asset next to `openengine-core`.
+fn wasm_asset_path() -> Option<String> {
+    if let Ok(p) = std::env::var("OPENENGINE_WASM_PATH") {
+        if Path::new(&p).exists() {
+            return Some(p);
+        }
+    }
+    let dev = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/assets/logic.wasm");
+    if Path::new(dev).exists() {
+        return Some(dev.to_string());
+    }
+    None
+}
+
+/// Build the demo scene: a player (entity 0) + 10 NPCs, each carrying the 3D
+/// gameplay columns (Transform, Velocity3D, Actor) the guest needs.
 fn build_scene() -> World {
     let mut w = World::new();
-    let add = |w: &mut World, pos: [f32; 3], color: EcsColor| {
+    let add = |w: &mut World, pos: [f32; 3], color: EcsColor, actor: Actor, vel: Velocity3D| {
         let idx = w.spawn(
             Position {
                 x: x(pos[0]),
@@ -57,34 +114,40 @@ fn build_scene() -> World {
             color,
         );
         w.set_transform(idx, tf(pos));
+        w.set_velocity_3d(idx, vel);
+        w.set_actor(idx, actor);
     };
-    // Player (entity 0) at origin.
+    // Player (entity 0) at origin, controllable by the guest from WASD/Space.
     add(
         &mut w,
-        [0.0, 0.5, 0.0],
+        [0.0, 0.0, 0.0],
         EcsColor {
             r: 0,
             g: 255,
             b: 0,
             a: 255,
         },
+        Actor::player(x(3.0), x(40.0)),
+        Velocity3D::zero(),
     );
-    // 10 "NPC" cubes along +X.
-    for i in 1..=10 {
-        let pos = [i as f32 * 2.5, 0.5, 0.0];
+    // NPCs: alternate wander (1) / circle (2) / chase (3) for behaviour variety.
+    for i in 1u32..=10 {
+        let pos = [i as f32 * 2.5, 0.0, 0.0];
         let c = EcsColor {
             r: ((i * 40) % 256) as u8,
             g: ((i * 90) % 256) as u8,
             b: ((i * 160) % 256) as u8,
             a: 255,
         };
-        add(&mut w, pos, c);
+        let kind = 1 + (i % 3); // 2,3,1 repeating
+        let actor = Actor::npc(kind, i * 2654435761);
+        add(&mut w, pos, c, actor, Velocity3D::zero());
     }
     w
 }
 
 impl EditorApp {
-    /// Build the app and an empty-ish demo scene.
+    /// Build the app and a demo scene (player + NPCs with gameplay actors).
     pub fn new() -> Self {
         let mut app = EditorApp {
             state: EditorState::new(build_scene()),
@@ -97,117 +160,105 @@ impl EditorApp {
             keys: [false; 5],
             player_vy: 0.0,
             follow_active: false,
-            nav_focus: true,
+            backend: PlayBackend::default(),
         };
-        // Default framing so the spawned cubes (x in 0..25) are visible.
-        app.camera.focus = glam::Vec3::new(12.5, 0.5, 0.0);
+        // Default framing so the spawned spheres (x in 0..25) are visible.
+        app.camera.focus = glam::Vec3::new(12.5, 0.0, 0.0);
         app.camera.distance = 34.0;
         app.camera.pitch = 0.45;
         app.camera.yaw = 0.6;
         app
     }
 
-    /// Advance the PLAY simulation one frame (called each frame in Playing mode).
-    /// Deterministic orbit so cubes visibly move; edits are never touched.
+    /// Advance the PLAY simulation by wall-clock time at a FIXED 60 Hz guest
+    /// tick. On each tick the real wasm logic runs over the play world; the
+    /// resulting `WorldDelta` is applied. Falls back to a native placeholder if
+    /// the wasm module could not be loaded. Edits are never touched.
     pub fn step_simulation(&mut self) {
         if self.state.mode != EditorMode::Playing {
-            // Not playing: the follow session is over; next Play re-frames once.
+            // Leaving Play: reset the follow session + the fixed-timestep clock.
             self.follow_active = false;
+            self.backend.accum = 0.0;
+            self.backend.last = None;
             return;
         }
-        let Some(world) = self.state.mutable_world() else {
-            return;
-        };
-        // Entering Play: adopt a close third-person follow view exactly once, so
-        // the player is framed. Afterwards the user keeps free orbit/zoom (the
-        // camera only re-tracks the player position, never the angle/distance).
+        // Load the wasm backend lazily on first Play.
+        if !self.backend.loaded {
+            self.backend.loaded = true;
+            match wasm_asset_path().and_then(|p| WasmGameplayHost::load(&p).ok()) {
+                Some(host) => self.backend.host = Some(host),
+                None => {
+                    self.backend.fallback = true;
+                    eprintln!("Play: logic.wasm unavailable → native fallback sim");
+                }
+            }
+        }
+        // Entering Play: frame the player once; afterwards user keeps orbit/zoom
+        // and the camera only re-tracks the player position.
         if !self.follow_active {
             self.camera.distance = 12.0;
             self.camera.pitch = 0.35;
             self.camera.yaw = 0.6;
             self.follow_active = true;
         }
-        let n = world.entity_count();
-        let frame = self.frame as f32;
-        let transforms = world
-            .get_transforms()
-            .map(|s| s[..n].to_vec())
-            .unwrap_or_default();
-        let mut out: Vec<Transform> = Vec::with_capacity(n);
 
-        let k = self.keys;
-        let mut px = if n > 0 {
-            transforms[0].position[0].to_num::<f32>()
-        } else {
-            12.5
-        };
-        let mut pz = if n > 0 {
-            transforms[0].position[2].to_num::<f32>()
-        } else {
-            0.0
-        };
-        let speed = 0.3;
-        if k[0] {
-            pz -= speed;
+        // Fixed 60 Hz timestep from wall clock (Domain A pacing only).
+        let now = Instant::now();
+        let step_s = 1.0 / 60.0;
+        if let Some(last) = self.backend.last {
+            self.backend.accum += (now - last).as_secs_f64();
         }
-        if k[1] {
-            pz += speed;
+        self.backend.last = Some(now);
+        let max_ticks = 8; // catch-up cap avoids a death spiral on stalls.
+        let mut ticks = 0;
+        while self.backend.accum >= step_s && ticks < max_ticks {
+            self.run_one_tick();
+            self.backend.accum -= step_s;
+            ticks += 1;
         }
-        if k[2] {
-            px -= speed;
-        }
-        if k[3] {
-            px += speed;
-        }
-        if k[4] && self.player_vy == 0.0 {
-            self.player_vy = 5.0;
-        }
-        self.player_vy -= 11.0 / 60.0;
-        let mut py = if n > 0 {
-            transforms[0].position[1].to_num::<f32>()
-        } else {
-            0.0
-        };
-        py += self.player_vy / 60.0;
-        if py <= 0.0 && self.player_vy < 0.0 {
-            py = 0.0;
-            self.player_vy = 0.0;
-        }
+        self.track_player();
+    }
 
-        for i in 0..n {
-            if i == 0 {
-                out.push(Transform::at(
-                    I16F16::from_num(px),
-                    I16F16::from_num(py),
-                    I16F16::from_num(pz),
-                ));
+    /// Run exactly one gameplay tick against the active (play) world.
+    fn run_one_tick(&mut self) {
+        let Some(world) = self.state.mutable_world() else {
+            return;
+        };
+        let input = InputState3D {
+            forward: self.keys[0] as u8,
+            backward: self.keys[1] as u8,
+            left: self.keys[2] as u8,
+            right: self.keys[3] as u8,
+            jump: self.keys[4] as u8,
+            ..InputState3D::none()
+        };
+        if let Some(host) = self.backend.host.as_mut() {
+            host.set_input(input);
+            if let Ok(delta) = host.tick(world, self.frame) {
+                world.apply_delta(&delta);
             } else {
-                let ang = frame * 0.02 + (i as f32) * 0.5;
-                let x = 12.5 + 13.0 * ang.cos();
-                let y = 0.5 + 0.5 * (frame * 0.05).sin();
-                let z = 6.0 * ang.sin();
-                out.push(Transform::at(
-                    I16F16::from_num(x),
-                    I16F16::from_num(y),
-                    I16F16::from_num(z),
-                ));
+                // A failed tick is non-fatal; keep the world as-is this tick.
+                eprintln!("Play: guest gameplay tick failed");
             }
+        } else {
+            native_fallback_tick(world, &self.keys, &mut self.player_vy);
         }
-        let mut delta = WorldDelta::default();
-        for (i, t) in out.iter().enumerate() {
-            delta.writes.push(ColumnWrite {
-                archetype: ArchetypeId(0),
-                component: ComponentId(comp::TRANSFORM),
-                indices: vec![i as u32],
-                payload: bytemuck::bytes_of(t).to_vec(),
-            });
-        }
-        world.apply_delta(&delta);
-
-        // Third-person follow: track the player position so it stays framed, but
-        // never touch distance/pitch/yaw — the user's orbit/zoom is preserved.
-        self.camera.focus = glam::Vec3::new(px, py + 1.2, pz);
         self.frame += 1;
+    }
+
+    /// Recenter the follow camera on the player's current transform.
+    fn track_player(&mut self) {
+        let world = self.state.active_world();
+        let Some(p) = world.get_transforms().and_then(|t| t.first()).map(|t| {
+            [
+                t.position[0].to_num::<f32>(),
+                t.position[1].to_num::<f32>(),
+                t.position[2].to_num::<f32>(),
+            ]
+        }) else {
+            return;
+        };
+        self.camera.focus = glam::Vec3::new(p[0], p[1] + 1.2, p[2]);
     }
 
     /// Orbit/pan/zoom the camera from viewport mouse events (egui).
@@ -270,7 +321,7 @@ impl EditorApp {
             .show(ctx, |ui| {
                 let rect = ui.available_rect_before_wrap();
                 self.viewport_rect = Some(rect);
-                ui.label(egui::RichText::new("3D viewport (cubes)").weak());
+                ui.label(egui::RichText::new("3D viewport (lit scene)").weak());
             });
     }
 
@@ -286,6 +337,19 @@ impl EditorApp {
                     self.state.stop();
                 }
                 ui.separator();
+                // Engine indicator: whether Play runs the guest wasm or fallback.
+                if self.state.mode == EditorMode::Playing {
+                    let (text, color) = if self.backend.host.is_some() {
+                        ("engine: wasm", egui::Color32::from_rgb(120, 220, 120))
+                    } else {
+                        (
+                            "engine: native fallback",
+                            egui::Color32::from_rgb(230, 200, 90),
+                        )
+                    };
+                    ui.label(egui::RichText::new(text).color(color));
+                    ui.separator();
+                }
                 let can_undo = self.undo.can_undo();
                 if ui
                     .add_enabled(can_undo, egui::Button::new("↶ Undo"))
@@ -434,6 +498,63 @@ impl EditorApp {
             self.selection.selected.clear();
         }
     }
+}
+
+/// Lightweight native placeholder used only when the wasm module is absent:
+/// WASD + a naive jump move the player; NPCs drift deterministically. This is
+/// NOT the certified logic — it exists purely so the shell never crashes.
+fn native_fallback_tick(world: &mut World, keys: &[bool; 5], player_vy: &mut f32) {
+    let n = world.entity_count();
+    if n == 0 {
+        return;
+    }
+    let mut t = world
+        .get_transforms()
+        .map(|s| s[..n].to_vec())
+        .unwrap_or_default();
+    let (mut px, mut pz) = {
+        let p = t[0].position;
+        (p[0].to_num::<f32>(), p[2].to_num::<f32>())
+    };
+    let mut py = t[0].position[1].to_num::<f32>();
+    let speed = 0.3;
+    // W = forward (-Z), S = back (+Z), A = left (-X), D = right (+X).
+    if keys[0] {
+        pz -= speed;
+    }
+    if keys[1] {
+        pz += speed;
+    }
+    if keys[2] {
+        px -= speed;
+    }
+    if keys[3] {
+        px += speed;
+    }
+    if keys[4] && *player_vy == 0.0 {
+        *player_vy = 0.6;
+    }
+    *player_vy -= 0.02;
+    py += *player_vy;
+    if py <= 0.0 && *player_vy < 0.0 {
+        py = 0.0;
+        *player_vy = 0.0;
+    }
+    t[0] = Transform::at(x(px), x(py), x(pz));
+    // NPCs drift slightly (visual placeholder only).
+    for slot in t.iter_mut().skip(1) {
+        slot.position[0] = x(slot.position[0].to_num::<f32>() + 0.01); // small +X drift
+    }
+    let mut delta = WorldDelta::default();
+    for (i, tr) in t.iter().enumerate() {
+        delta.writes.push(ColumnWrite {
+            archetype: ArchetypeId(0),
+            component: ComponentId(comp::TRANSFORM),
+            indices: vec![i as u32],
+            payload: bytemuck::bytes_of(tr).to_vec(),
+        });
+    }
+    world.apply_delta(&delta);
 }
 
 impl Default for EditorApp {

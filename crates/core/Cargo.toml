@@ -22,3 +22,6 @@ anyhow.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+openengine-logic-sandbox = { path = "../logic-sandbox" }
