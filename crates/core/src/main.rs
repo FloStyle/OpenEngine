@@ -1,45 +1,45 @@
-//! # Domain A — "The Living Window" (`openengine-core` binary)
+//! # Domain A — "First Playable Prototype" (`openengine-core` binary)
 //!
-//! The minimal vertical slice that proves the Triforce architecture end to end:
+//! A windowed PoC: 100 colored squares (one player, green), movement computed
+//! inside the wasm guest through the SoA bridge (Phase 3), input (Domain A)
+//! sets the player's velocity, the guest integrates + bounces. Rendered with
+//! wgpu (Vulkan) as colored quads.
 //!
-//! ```text
-//!   winit frame
-//!      │  tick ─────────────────────────────┐
-//!      ▼                                   ▼
-//!   Domain B wasm (logic-sandbox, no_std)  ◄── wasmtime hosts & drives it
-//!   tick_color computes a colour in fixed-point
-//!      │  returns WorldDelta{ ClearColor }
-//!      ▼  (postcard over guest linear memory)
-//!   host decodes WorldDelta, reads ClearColor
-//!      ▼
-//!   wgpu (Vulkan) clears the surface & presents
-//! ```
-//!
-//! Domain A owns the event loop, GPU, and sandbox. Domain B only ever sees a
-//! `StateView` and answers with a `WorldDelta`. Nothing else crosses.
+//! Note: windowing needs a display + Vulkan, so this binary is run on your
+//! machine (`cargo run -p openengine-core` after `bash scripts/build.sh`).
+
+mod input;
+mod renderer;
 
 use std::sync::Arc;
 
 use anyhow::Context;
+use input::{InputState, PlayerInput};
+use openengine_contracts::{comp, ArchetypeId, ColumnWrite, ComponentId, WorldDelta};
+use openengine_core::wasm_move_host::WasmMoveHost;
+use openengine_ecs::{Color, Position, Velocity, World};
+use openengine_math::I16F16;
+use renderer::QuadRenderer;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
-/// Path of the compiled Domain-B logic module, produced by `scripts/build.sh`.
-/// Relative to the `core` crate so `cargo run` works from any cwd.
+/// Compiled Domain-B module (scripts/build.sh).
 const WASM_ASSET: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/logic.wasm");
 
-/// How many guest linear-memory bytes to reserve for the encoded `WorldDelta`.
-const GUEST_BUFFER_CAP: u32 = 4096;
+/// Logical playfield 0..FIELD pixels on both axes (matches guest wall bounds).
+const FIELD: i32 = 500;
+const QUAD: i32 = 10;
+const ENTITY_COUNT: usize = 100;
+const PLAYER_SPEED: i32 = 6;
 
 // ────────────────────────────────────────────────────────────────────────────
-// wgpu (Vulkan) state
+// wgpu (Vulkan) state + frame presentation
 // ────────────────────────────────────────────────────────────────────────────
 
 struct Gpu {
-    /// Kept alive: the surface borrows the instance on the host side.
     _instance: wgpu::Instance,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -48,17 +48,14 @@ struct Gpu {
 }
 
 impl Gpu {
-    /// Create a Vulkan-only instance, surface, adapter, device and queue.
     async fn new(window: Arc<Window>) -> anyhow::Result<Self> {
-        // Workspace rule: prefer (here: require) the Vulkan backend.
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN,
             ..Default::default()
         });
         let surface = instance
             .create_surface(window.clone())
-            .context("create wgpu surface from window")?;
-
+            .context("create wgpu surface")?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -66,8 +63,7 @@ impl Gpu {
                 force_fallback_adapter: false,
             })
             .await
-            .context("request Vulkan adapter")?;
-
+            .context("request adapter")?;
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("openengine.device"),
@@ -78,14 +74,9 @@ impl Gpu {
             })
             .await
             .context("request device")?;
-
         let size = window.inner_size();
         let caps = surface.get_capabilities(&adapter);
-        let format = caps
-            .formats
-            .first()
-            .copied()
-            .context("surface has no formats")?;
+        let format = caps.formats.first().copied().context("no surface format")?;
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
@@ -97,7 +88,6 @@ impl Gpu {
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
-
         Ok(Gpu {
             _instance: instance,
             surface,
@@ -116,118 +106,20 @@ impl Gpu {
         self.surface.configure(&self.device, &self.config);
     }
 
-    /// Clear the swapchain target with `rgba` and present it.
-    fn clear_and_present(&mut self, rgba: [f32; 4]) -> anyhow::Result<()> {
+    /// Render quads from `world` into the swapchain and present.
+    fn present_quads(
+        &mut self,
+        renderer: &mut QuadRenderer,
+        world: &World,
+        size: (u32, u32),
+    ) -> anyhow::Result<()> {
         let frame = self.surface.get_current_texture()?;
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("openengine.frame"),
-            });
-
-        let clear = wgpu::Color {
-            r: rgba[0] as f64,
-            g: rgba[1] as f64,
-            b: rgba[2] as f64,
-            a: rgba[3] as f64,
-        };
-        {
-            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("openengine.clear"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(clear),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-        }
-        self.queue.submit(std::iter::once(encoder.finish()));
+        renderer.render(&self.device, &self.queue, &view, world, size);
         frame.present();
         Ok(())
-    }
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// wasmtime sandbox state
-// ────────────────────────────────────────────────────────────────────────────
-
-struct Logic {
-    /// Engine must outlive the store; cloned handle keeps it alive.
-    _engine: wasmtime::Engine,
-    store: wasmtime::Store<()>,
-    tick: wasmtime::TypedFunc<(u64, u32, u32), u32>,
-    memory: wasmtime::Memory,
-    /// Long-lived guest scratch buffer (from `openengine_alloc`).
-    buf: u32,
-    /// Monotonic Domain-A frame counter handed to Domain B.
-    frame: u64,
-}
-
-impl Logic {
-    fn load() -> anyhow::Result<Self> {
-        let bytes = std::fs::read(WASM_ASSET).with_context(|| {
-            format!(
-                "missing {WASM_ASSET} — run `bash scripts/build.sh` first to \
-                 compile the Domain-B wasm module"
-            )
-        })?;
-
-        let engine = wasmtime::Engine::default();
-        let module = wasmtime::Module::new(&engine, bytes).context("compile wasm module")?;
-        let mut store = wasmtime::Store::new(&engine, ());
-
-        let linker = wasmtime::Linker::new(&engine);
-        let instance = linker
-            .instantiate(&mut store, &module)
-            .context("instantiate logic module")?;
-
-        let alloc = instance
-            .get_typed_func::<u32, u32>(&mut store, "openengine_alloc")
-            .context("missing guest export openengine_alloc")?;
-        let tick = instance
-            .get_typed_func::<(u64, u32, u32), u32>(&mut store, "openengine_tick")
-            .context("missing guest export openengine_tick")?;
-        let memory = instance
-            .get_memory(&mut store, "memory")
-            .context("guest must export linear memory as 'memory'")?;
-
-        // Reserve the scratch buffer ONCE; it is reused every frame.
-        let buf = alloc.call(&mut store, GUEST_BUFFER_CAP)?;
-
-        Ok(Logic {
-            _engine: engine,
-            store,
-            tick,
-            memory,
-            buf,
-            frame: 0,
-        })
-    }
-
-    /// Run one tick of Domain B and return the requested clear colour.
-    fn clear_color(&mut self) -> anyhow::Result<[f32; 4]> {
-        self.frame += 1;
-        let n = self
-            .tick
-            .call(&mut self.store, (self.frame, self.buf, GUEST_BUFFER_CAP))?;
-        if n == 0 || n as usize > GUEST_BUFFER_CAP as usize {
-            anyhow::bail!("guest tick returned an invalid delta length ({n})");
-        }
-        let mut out = vec![0u8; n as usize];
-        self.memory
-            .read(&self.store, self.buf as usize, &mut out)
-            .context("read WorldDelta from guest memory")?;
-        let delta = openengine_contracts::decode_delta(&out).context("decode WorldDelta")?;
-        Ok(delta.clear_color().unwrap_or([0.05, 0.05, 0.08, 1.0]))
     }
 }
 
@@ -236,10 +128,13 @@ impl Logic {
 // ────────────────────────────────────────────────────────────────────────────
 
 struct App {
-    /// None until the OS gives us a surface in `resumed`.
     window: Option<Arc<Window>>,
     gpu: Option<Gpu>,
-    logic: Option<Logic>,
+    renderer: Option<QuadRenderer>,
+    world: World,
+    wasm_host: Option<WasmMoveHost>,
+    input: InputState,
+    frame: u64,
 }
 
 impl App {
@@ -247,14 +142,113 @@ impl App {
         App {
             window: None,
             gpu: None,
-            logic: None,
+            renderer: None,
+            world: build_world(),
+            wasm_host: None,
+            input: InputState::new(),
+            frame: 0,
         }
     }
+
+    /// Apply player input as a velocity write to entity 0 (host-authored),
+    /// then let the wasm guest integrate + bounce (gameplay stays in Domain B).
+    fn step(&mut self) {
+        let player = self.input.get_player_input();
+        self.apply_player_velocity(&player);
+
+        let Some(host) = self.wasm_host.as_mut() else {
+            return;
+        };
+        match host.tick(&self.world) {
+            Ok(delta) => self.world.apply_delta(&delta),
+            Err(e) => eprintln!("wasm movement error: {e:#}"),
+        }
+    }
+
+    fn apply_player_velocity(&mut self, input: &PlayerInput) {
+        let (mut vx, mut vy) = (0, 0);
+        if input.left {
+            vx = -PLAYER_SPEED;
+        }
+        if input.right {
+            vx = PLAYER_SPEED;
+        }
+        if input.up {
+            vy = -PLAYER_SPEED;
+        }
+        if input.down {
+            vy = PLAYER_SPEED;
+        }
+        let vel = Velocity {
+            x: I16F16::from_num(vx),
+            y: I16F16::from_num(vy),
+        };
+        let mut delta = WorldDelta::default();
+        delta.writes.push(ColumnWrite {
+            archetype: ArchetypeId(0),
+            component: ComponentId(comp::VELOCITY),
+            indices: vec![0],
+            payload: bytemuck::bytes_of(&vel).to_vec(),
+        });
+        self.world.apply_delta(&delta);
+    }
+}
+
+/// Spawn the player (entity 0, green) + 99 NPCs (deterministic colours/velocities).
+fn build_world() -> World {
+    let mut world = World::new();
+    let spacing = FIELD / 10;
+    for i in 0..ENTITY_COUNT {
+        let (x, y) = if i == 0 {
+            (FIELD / 2, FIELD / 2)
+        } else {
+            let gx = (i as i32) % 10;
+            let gy = (i as i32) / 10;
+            (gx * spacing + spacing / 2, gy * spacing + spacing / 2)
+        };
+        let color = if i == 0 {
+            Color {
+                r: 0,
+                g: 255,
+                b: 0,
+                a: 255,
+            }
+        } else {
+            Color {
+                r: ((i * 37) % 256) as u8,
+                g: ((i * 73) % 256) as u8,
+                b: ((i * 109) % 256) as u8,
+                a: 255,
+            }
+        };
+        // Player starts still; NPCs drift deterministically (nonzero velocity).
+        let vel = if i == 0 {
+            Velocity {
+                x: I16F16::from_num(0),
+                y: I16F16::from_num(0),
+            }
+        } else {
+            Velocity {
+                x: I16F16::from_num(((((i * 7) % 9) as i32) - 4) * 2),
+                y: I16F16::from_num(((((i * 13) % 9) as i32) - 4) * 2),
+            }
+        };
+        world.spawn(
+            Position {
+                x: I16F16::from_num(x),
+                y: I16F16::from_num(y),
+            },
+            vel,
+            color,
+        );
+    }
+    // QUAD is exposed for sizing; entity positions already leave room.
+    let _ = QUAD;
+    world
 }
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // (Re)create everything when the platform gives us a surface.
         if self.window.is_some() {
             return;
         }
@@ -262,26 +256,22 @@ impl ApplicationHandler for App {
             event_loop
                 .create_window(
                     Window::default_attributes()
-                        .with_title("OpenEngine — Living Window")
-                        .with_inner_size(LogicalSize::new(900.0, 600.0)),
+                        .with_title("OpenEngine — First Playable Prototype")
+                        .with_inner_size(LogicalSize::new(520.0, 520.0)),
                 )
                 .expect("create window"),
         );
-
         let gpu = pollster::block_on(Gpu::new(window.clone())).expect("init wgpu (Vulkan)");
-        let logic = Logic::load().expect("init wasmtime logic sandbox");
+        let renderer = QuadRenderer::new(&gpu.device, gpu.config.format);
+        let wasm_host = WasmMoveHost::load(WASM_ASSET).expect("init wasm movement host");
 
         self.window = Some(window);
         self.gpu = Some(gpu);
-        self.logic = Some(logic);
+        self.renderer = Some(renderer);
+        self.wasm_host = Some(wasm_host);
     }
 
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
-        event: WindowEvent,
-    ) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
@@ -289,39 +279,30 @@ impl ApplicationHandler for App {
                     gpu.resize(size.width, size.height);
                 }
             }
-            // Continuous animation is driven from `about_to_wait` (ControlFlow::Poll).
+            WindowEvent::KeyboardInput { event, .. } => self.input.handle_key_event(&event),
             _ => {}
         }
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        let Some(gpu) = self.gpu.as_mut() else { return };
-        let Some(logic) = self.logic.as_mut() else {
-            return;
-        };
+        self.step();
 
-        // 1..4. Run Domain B and read the colour out of its WorldDelta.
-        let color = match logic.clear_color() {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("logic tick error: {e:#}");
-                [0.2, 0.0, 0.0, 1.0] // red-ish: surface the failure visibly
+        if let (Some(gpu), Some(renderer), Some(window)) =
+            (&mut self.gpu, &mut self.renderer, &self.window)
+        {
+            let size = window.inner_size();
+            if let Err(e) = gpu.present_quads(renderer, &self.world, (size.width, size.height)) {
+                eprintln!("render error: {e:#}");
             }
-        };
-
-        // 6-7. Clear with the guest-computed colour and present.
-        if let Err(e) = gpu.clear_and_present(color) {
-            // Surface loss is normal on resize/occlusion; recover next frame.
-            eprintln!("render error: {e:#}");
         }
+        self.input.clear_frame_state();
+        self.frame += 1;
     }
 }
 
 fn main() -> anyhow::Result<()> {
-    let event_loop = EventLoop::new().context("create winit event loop")?;
-    // Continuous animation: Poll + render in about_to_wait.
+    let event_loop = EventLoop::new().context("create event loop")?;
     event_loop.set_control_flow(ControlFlow::Poll);
-
     let mut app = App::new();
     event_loop.run_app(&mut app).map_err(anyhow::Error::from)?;
     Ok(())
