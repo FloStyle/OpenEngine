@@ -68,7 +68,7 @@ anyhow   = { version = "1" }
 # ---- Domain B : Deterministic math + zero-copy wire format ---------------
 # fixed is the ONLY sanctioned fractional representation in game logic.
 fixed    = { version = "1.28", default-features = false }
-glam     = { version = "0.29", default-features = false, features = ["bytemuck"] }
+glam     = { version = "0.29", default-features = false, features = ["std", "bytemuck"] }
 
 # ---- Cross-domain transport ----------------------------------------------
 # bytemuck derives are required for SoA Pod descriptors.
