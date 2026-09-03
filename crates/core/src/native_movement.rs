@@ -1,7 +1,7 @@
 //! Native (Domain A) movement system — PoC Phase B.
 //!
 //! Proves the **single mutation channel**: reads the world, returns a
-//! [`WorldDelta`] of batched `ColumnWrite`s, and never holds `&mut` into a
+//! `WorldDelta` of batched `ColumnWrite`s, and never holds `&mut` into a
 //! column. The host applies the delta with `World::apply_delta`.
 
 use openengine_contracts::{ArchetypeId, ColumnWrite, ComponentId, WorldDelta};
