@@ -140,7 +140,8 @@ fn build_scene() -> World {
             a: 255,
         };
         let kind = 1 + (i % 3); // 2,3,1 repeating
-        let actor = Actor::npc(kind, i * 2654435761);
+                                // Knuth golden-ratio seed, wrapping (deterministic; avoids debug overflow).
+        let actor = Actor::npc(kind, i.wrapping_mul(2_654_435_761));
         add(&mut w, pos, c, actor, Velocity3D::zero());
     }
     w
