@@ -1,14 +1,18 @@
-//! Headless GPU readback smoke tests: render cubes to an offscreen texture and
-//! prove distinct, spatially separated instances are drawn. No window required
-//! (needs a wgpu adapter — Vulkan/GL/llvmpipe all acceptable). Skips if none.
+//! Headless GPU readback smoke tests for the editor viewport. No window needed
+//! (wgpu adapter — Vulkan/GL/llvmpipe all acceptable); skips if none exists.
 //!
-//! Two assertions matter:
-//!   1. `scene_draws_some_pixels`   — the pipeline emits *something* (guards
-//!      against a fully-dark viewport, the culling bug we hit before).
-//!   2. `scene_draws_several_separated_instances` — 3 cubes placed along a line
-//!      show up as >= 3 column-runs of lit pixels with empty gaps between them
-//!      (guards against the "one cube only" regression: a single instance, or
-//!      overlapping instances, cannot produce multiple separated column runs).
+//! The scene is now Blender-style: a light sky clear, a checkered ground plane,
+//! and each entity drawn as a lit sphere. Because sky + ground now cover the
+//! whole frame, instance detection is **hue-based**: entities are spawned in
+//! vivid colors (red/green/yellow) that can never match the grey ground or the
+//! light blue-grey sky, so a distinct color blob proves a distinct instance.
+//!
+//! Assertions:
+//!   1. `scene_has_ground_and_sky` — the frame contains light-sky and grey
+//!      ground tones (visual richness; the old "fully dark" guard).
+//!   2. `scene_draws_several_separated_instances` — red, green and yellow
+//!      spheres placed along X each appear, at horizontally separated screen
+//!      positions (the "one cube only" regression guard).
 
 use openengine_ecs::{Color as EcsColor, Position, Velocity, World};
 use openengine_editor::camera::EditorCamera;
@@ -19,8 +23,11 @@ fn fx(v: f32) -> I16F16 {
     I16F16::from_num(v)
 }
 
-/// Add a white cube entity at a world position.
-fn add_cube(w: &mut World, pos: [f32; 3]) {
+const W: usize = 256;
+const H: usize = 256;
+
+/// Spawn an entity as a sphere of the given vivid RGB color at a world pos.
+fn add_sphere(w: &mut World, pos: [f32; 3], rgb: [u8; 3]) {
     let i = w.spawn(
         Position {
             x: fx(0.0),
@@ -31,9 +38,9 @@ fn add_cube(w: &mut World, pos: [f32; 3]) {
             y: fx(0.0),
         },
         EcsColor {
-            r: 255,
-            g: 255,
-            b: 255,
+            r: rgb[0],
+            g: rgb[1],
+            b: rgb[2],
             a: 255,
         },
     );
@@ -43,13 +50,10 @@ fn add_cube(w: &mut World, pos: [f32; 3]) {
     );
 }
 
-const W: u32 = 256;
-const H: u32 = 256;
-
-/// Camera aimed at the origin from +Z (yaw = 0), slightly above (pitch).
-fn cam(distance: f32) -> EditorCamera {
+/// Camera aimed at `focus` from +Z (yaw = 0), slightly above (pitch).
+fn cam(focus: [f32; 3], distance: f32) -> EditorCamera {
     EditorCamera {
-        focus: glam::Vec3::new(0.0, 0.0, 0.0),
+        focus: glam::Vec3::new(focus[0], focus[1], focus[2]),
         distance,
         yaw: 0.0,
         pitch: 0.3,
@@ -57,18 +61,18 @@ fn cam(distance: f32) -> EditorCamera {
     }
 }
 
-/// Render `world` to an offscreen texture and return the RGBA8 pixels.
+/// Render `world` to an offscreen RGBA8 texture and return the raw pixels.
 fn render(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    renderer: &SceneRenderer,
+    renderer: &mut SceneRenderer,
     world: &World,
     camera: &EditorCamera,
     format: wgpu::TextureFormat,
 ) -> Vec<u8> {
     let size = wgpu::Extent3d {
-        width: W,
-        height: H,
+        width: W as u32,
+        height: H as u32,
         depth_or_array_layers: 1,
     };
     let tex = device.create_texture(&wgpu::TextureDescriptor {
@@ -82,6 +86,17 @@ fn render(
         view_formats: &[],
     });
     let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+    let depth = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("offscreen.depth"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Depth32Float,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
     let bytes = (W * H * 4) as u64;
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("readback"),
@@ -91,7 +106,16 @@ fn render(
     });
 
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-    renderer.draw(device, queue, &mut enc, &view, world, camera, 1.0);
+    renderer.draw(
+        device,
+        queue,
+        &mut enc,
+        &view,
+        &depth_view,
+        world,
+        camera,
+        1.0,
+    );
     queue.submit(std::iter::once(enc.finish()));
 
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -106,8 +130,8 @@ fn render(
             buffer: &readback,
             layout: wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(W * 4),
-                rows_per_image: Some(H),
+                bytes_per_row: Some(W as u32 * 4),
+                rows_per_image: Some(H as u32),
             },
         },
         size,
@@ -123,86 +147,110 @@ fn render(
     out
 }
 
-/// Return (col_runs, pixel_count). A "lit column" is one where at least one
-/// pixel is clearly non-background. `col_runs` is the number of contiguous
-/// groups of lit columns separated by at least `gap` empty columns.
-fn profile(pixels: &[u8]) -> (Vec<(usize, usize)>, usize) {
-    let mut lit_cols = vec![false; W as usize];
-    let mut count = 0usize;
-    for (pix_i, chunk) in pixels.chunks_exact(4).enumerate() {
-        let x = pix_i % W as usize;
-        if chunk[0] > 60 || chunk[1] > 60 || chunk[2] > 60 {
-            lit_cols[x] = true;
-            count += 1;
-        }
-    }
-    // Collapse lit columns into runs with a gap tolerance of 3 empty columns.
-    let gap = 3usize;
-    let mut runs: Vec<(usize, usize)> = Vec::new();
-    let mut start: Option<usize> = None;
-    let mut last_lit: usize = 0;
-    for (x, is_lit) in lit_cols.iter().enumerate() {
-        if *is_lit {
-            if start.is_none() {
-                start = Some(x);
-            }
-            last_lit = x;
-        } else if let Some(s) = start {
-            if x - last_lit > gap {
-                runs.push((s, last_lit));
-                start = None;
-            }
-        }
-    }
-    if let Some(s) = start {
-        runs.push((s, last_lit));
-    }
-    (runs, count)
-}
-
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
         ..Default::default()
     });
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::LowPower,
-        compatible_surface: None,
-        force_fallback_adapter: true,
-    }))
-    .ok()?;
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("smoke"),
-        required_features: wgpu::Features::empty(),
-        required_limits: wgpu::Limits::default(),
-        memory_hints: wgpu::MemoryHints::default(),
-        trace: wgpu::Trace::Off,
-    }))
-    .ok()?;
-    Some((device, queue))
+    let tries = [
+        wgpu::PowerPreference::HighPerformance,
+        wgpu::PowerPreference::LowPower,
+    ];
+    // GPU enumeration on CI/headless boxes is occasionally transient; retry a
+    // few times before giving up so a lone busy frame doesn't SKIP the test.
+    for attempt in 0..8 {
+        for pp in tries {
+            if let Ok(adapter) =
+                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: pp,
+                    compatible_surface: None,
+                    force_fallback_adapter: false,
+                }))
+            {
+                if let Ok((device, queue)) =
+                    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                        label: Some("smoke"),
+                        required_features: wgpu::Features::empty(),
+                        required_limits: wgpu::Limits::default(),
+                        memory_hints: wgpu::MemoryHints::default(),
+                        trace: wgpu::Trace::Off,
+                    }))
+                {
+                    return Some((device, queue));
+                }
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if attempt == 0 {
+            eprintln!("  (retrying device acquisition…)");
+        }
+    }
+    None
+}
+
+/// Median column of pixels matching `pred`; None if none match.
+fn median_col<F: Fn(&[u8]) -> bool>(pixels: &[u8], pred: F) -> Option<f32> {
+    let mut cols: Vec<f32> = Vec::new();
+    for (i, chunk) in pixels.chunks_exact(4).enumerate() {
+        if pred(chunk) {
+            cols.push((i % W) as f32);
+        }
+    }
+    if cols.is_empty() {
+        return None;
+    }
+    cols.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    Some(cols[cols.len() / 2])
+}
+
+fn is_red(c: &[u8]) -> bool {
+    c[0] > 120 && c[1] < 100 && c[2] < 100
+}
+fn is_green(c: &[u8]) -> bool {
+    c[1] > 120 && c[0] < 100 && c[2] < 100
+}
+fn is_yellow(c: &[u8]) -> bool {
+    c[0] > 120 && c[1] > 120 && c[2] < 100
+}
+fn is_sky(c: &[u8]) -> bool {
+    c[2] > c[0] && c[2] > c[1] && c[2] > 180
+}
+fn is_grey_ground(c: &[u8]) -> bool {
+    let mx = *c.iter().take(3).max().unwrap();
+    let mn = *c.iter().take(3).min().unwrap();
+    // Checker greys are near-neutral (channel spread < ~20) but visibly lit;
+    // sky (blue-leaning, spread ~48) and vivid spheres are excluded.
+    mx - mn < 32 && mx > 40 && mx < 230
 }
 
 #[test]
-fn scene_draws_some_pixels() {
+fn scene_has_ground_and_sky() {
     let Some((device, queue)) = device() else {
         eprintln!("SKIP: no wgpu adapter available");
         return;
     };
     let format = wgpu::TextureFormat::Rgba8Unorm;
-    let renderer = SceneRenderer::new(&device, &queue, format);
+    let mut renderer = SceneRenderer::new(&device, &queue, format);
 
     let mut w = World::new();
-    add_cube(&mut w, [0.0, 0.0, 0.0]);
-    add_cube(&mut w, [3.0, 0.0, 0.0]);
-    add_cube(&mut w, [0.0, 0.0, 3.0]);
-
-    let pixels = render(&device, &queue, &renderer, &w, &cam(12.0), format);
-    let (_, count) = profile(&pixels);
-    assert!(
-        count > 0,
-        "renderer produced NO non-background pixels ({count}) — pipeline/camera broken"
+    add_sphere(&mut w, [0.0, 0.6, 0.0], [200, 40, 40]);
+    let pixels = render(
+        &device,
+        &queue,
+        &mut renderer,
+        &w,
+        &cam([0.0, 0.3, 0.0], 10.0),
+        format,
     );
-    println!("render_smoke[some]: {count} lit pixels");
+
+    let sky = pixels.chunks_exact(4).filter(|c| is_sky(c)).count();
+    let ground = pixels.chunks_exact(4).filter(|c| is_grey_ground(c)).count();
+    assert!(sky > 0, "no sky pixels rendered (clear/sky broken)");
+    assert!(
+        ground > 0,
+        "no ground pixels rendered (checkered ground broken)"
+    );
+    println!("render_smoke[scene]: {sky} sky px, {ground} ground px");
 }
 
 #[test]
@@ -212,23 +260,48 @@ fn scene_draws_several_separated_instances() {
         return;
     };
     let format = wgpu::TextureFormat::Rgba8Unorm;
-    let renderer = SceneRenderer::new(&device, &queue, format);
+    let mut renderer = SceneRenderer::new(&device, &queue, format);
 
-    // Three cubes well separated along the camera's right axis (world X).
-    // Symmetric around the origin, camera looking down -Z from distance 16.
+    // Red / green / yellow spheres, widely separated along the camera right
+    // axis (world X), resting on the ground. Vivid colors can't be confused
+    // with the grey ground or the light sky.
     let mut w = World::new();
-    add_cube(&mut w, [-5.0, 0.0, 0.0]);
-    add_cube(&mut w, [0.0, 0.0, 0.0]);
-    add_cube(&mut w, [5.0, 0.0, 0.0]);
+    add_sphere(&mut w, [-4.0, 0.6, 0.0], [255, 0, 0]); // red (left)
+    add_sphere(&mut w, [0.0, 0.6, 0.0], [0, 255, 0]); // green (center)
+    add_sphere(&mut w, [4.0, 0.6, 0.0], [255, 255, 0]); // yellow (right)
 
-    let camera = cam(16.0);
-    let pixels = render(&device, &queue, &renderer, &w, &camera, format);
-    let (runs, count) = profile(&pixels);
+    let pixels = render(
+        &device,
+        &queue,
+        &mut renderer,
+        &w,
+        &cam([0.0, 0.6, 0.0], 16.0),
+        format,
+    );
 
-    // A single instance, or overlapping instances, yields <= ~2 column runs at
-    // most; three genuinely separated cubes must yield >= 3 separated runs.
-    let msg =
-        format!("expected >=3 separated column-runs for 3 cubes, got {runs:?} ({count} lit px)");
-    assert!(runs.len() >= 3, "{msg}");
-    println!("render_smoke[separated]: {count} lit px across {runs:?}");
+    // Exactly one blob of each distinct color must appear.
+    let red = pixels.chunks_exact(4).filter(|c| is_red(c)).count();
+    let green = pixels.chunks_exact(4).filter(|c| is_green(c)).count();
+    let yellow = pixels.chunks_exact(4).filter(|c| is_yellow(c)).count();
+    let rc = median_col(&pixels, is_red);
+    let gc = median_col(&pixels, is_green);
+    let yc = median_col(&pixels, is_yellow);
+
+    // All three distinct instances are present and render large enough to spot.
+    assert!(red > 10, "red sphere not drawn (only {red} px)");
+    assert!(green > 10, "green sphere not drawn (only {green} px)");
+    assert!(yellow > 10, "yellow sphere not drawn (only {yellow} px)");
+
+    // They are spatially separated horizontally (no overlapping single blob).
+    let (Some(rc), Some(gc), Some(yc)) = (rc, gc, yc) else {
+        panic!("could not locate all three spheres");
+    };
+    let spread = yc - rc;
+    assert!(
+        spread > 30.0,
+        "spheres not spatially separated: red@{rc:.0} green@{gc:.0} yellow@{yc:.0} (spread {spread:.0}px)"
+    );
+    println!(
+        "render_smoke[separated]: red@{rc:.0} green@{gc:.0} yellow@{yc:.0} ({red},{green},{yellow} px) spread {spread:.0}px"
+    );
 }

@@ -12,12 +12,35 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
+const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+fn make_depth(device: &wgpu::Device, w: u32, h: u32) -> (wgpu::Texture, wgpu::TextureView) {
+    let tex = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("scene.depth"),
+        size: wgpu::Extent3d {
+            width: w.max(1),
+            height: h.max(1),
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: DEPTH_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+    (tex, view)
+}
+
 struct Gpu {
     _instance: wgpu::Instance,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    depth: wgpu::Texture,
+    depth_view: wgpu::TextureView,
 }
 
 impl Gpu {
@@ -59,12 +82,15 @@ impl Gpu {
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
+        let (depth, depth_view) = make_depth(&device, config.width, config.height);
         Ok(Gpu {
             _instance: instance,
             surface,
             device,
             queue,
             config,
+            depth,
+            depth_view,
         })
     }
     fn resize(&mut self, w: u32, h: u32) {
@@ -74,6 +100,9 @@ impl Gpu {
         self.config.width = w;
         self.config.height = h;
         self.surface.configure(&self.device, &self.config);
+        let (depth, depth_view) = make_depth(&self.device, self.config.width, self.config.height);
+        self.depth = depth;
+        self.depth_view = depth_view;
     }
 }
 
@@ -178,7 +207,7 @@ impl Shell {
             &mut self.app,
             &mut self.egui_state,
             &mut self.egui_renderer,
-            &self.scene,
+            &mut self.scene,
         ) else {
             return;
         };
@@ -212,6 +241,7 @@ impl Shell {
                 &gpu.queue,
                 &mut encoder,
                 &view,
+                &gpu.depth_view,
                 world,
                 &app.camera,
                 aspect,
