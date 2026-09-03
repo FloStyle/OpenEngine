@@ -5,7 +5,7 @@
 //! 3D viewport is rendered by the shell's wgpu pass (in `main.rs`).
 
 use egui::Context;
-use openengine_contracts::Transform;
+use openengine_contracts::{comp, ArchetypeId, ColumnWrite, ComponentId, Transform, WorldDelta};
 use openengine_ecs::{Color as EcsColor, Position, Velocity, World};
 use openengine_editor::camera::EditorCamera;
 use openengine_editor::commands::{ModifyTransformCommand, UndoRedoManager};
@@ -22,6 +22,8 @@ pub struct EditorApp {
     pub egui_ctx: Context,
     /// Rect of the last 3D viewport (central panel), set each frame by `ui`.
     pub viewport_rect: Option<egui::Rect>,
+    /// Running frame counter used by the play sim.
+    pub frame: u64,
 }
 
 fn x(v: f32) -> I16F16 {
@@ -76,14 +78,54 @@ fn build_scene() -> World {
 impl EditorApp {
     /// Build the app and an empty-ish demo scene.
     pub fn new() -> Self {
-        EditorApp {
+        let mut app = EditorApp {
             state: EditorState::new(build_scene()),
             selection: SelectionModel::default(),
             undo: UndoRedoManager::new(),
             camera: EditorCamera::default(),
             egui_ctx: Context::default(),
             viewport_rect: None,
+            frame: 0,
+        };
+        // Default framing so the spawned cubes (x in 0..25) are visible.
+        app.camera.focus = glam::Vec3::new(12.5, 0.5, 0.0);
+        app.camera.distance = 34.0;
+        app.camera.pitch = 0.45;
+        app.camera.yaw = 0.6;
+        app
+    }
+
+    /// Advance the PLAY simulation one frame (called each frame in Playing mode).
+    /// Deterministic orbit so cubes visibly move; edits are never touched.
+    pub fn step_simulation(&mut self) {
+        if self.state.mode != EditorMode::Playing {
+            return;
         }
+        let Some(world) = self.state.mutable_world() else {
+            return;
+        };
+        let n = world.entity_count();
+        let frame = self.frame as f32;
+        let mut delta = WorldDelta::default();
+        for i in 0..n {
+            let ang = frame * 0.02 + (i as f32) * 0.5;
+            let x = 12.5 + 13.0 * ang.cos();
+            let y = 0.5 + 0.5 * (frame * 0.05).sin();
+            let z = 6.0 * ang.sin();
+            let t = Transform::at(
+                I16F16::from_num(x),
+                I16F16::from_num(y),
+                I16F16::from_num(z),
+            );
+            delta.writes.push(ColumnWrite {
+                archetype: ArchetypeId(0),
+                component: ComponentId(comp::TRANSFORM),
+                indices: vec![i as u32],
+                payload: bytemuck::bytes_of(&t).to_vec(),
+            });
+        }
+        world.apply_delta(&delta);
+        self.frame += 1;
     }
 
     /// Render the toolbar + hierarchy + inspector + reserve the central viewport.
@@ -95,11 +137,8 @@ impl EditorApp {
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| {
                 let rect = ui.available_rect_before_wrap();
-                // Dark viewport background placeholder (real 3D pass in main.rs).
-                ui.painter()
-                    .rect_filled(rect, 0.0, egui::Color32::from_rgb(16, 18, 26));
                 self.viewport_rect = Some(rect);
-                ui.label(egui::RichText::new("3D viewport (wgpu pass)").weak());
+                ui.label(egui::RichText::new("3D viewport (cubes)").weak());
             });
     }
 

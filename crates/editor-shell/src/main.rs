@@ -1,14 +1,11 @@
 //! OpenEngine Editor Shell binary (Domain A) — winit 0.30 + wgpu 25 + egui 0.32.
 
-mod app;
-mod renderer;
-
 use std::sync::Arc;
 
 use anyhow::Context;
-use app::EditorApp;
 use egui::ViewportId;
-use renderer::SceneRenderer;
+use openengine_editor_shell::app::EditorApp;
+use openengine_editor_shell::renderer::SceneRenderer;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
@@ -190,6 +187,7 @@ impl Shell {
         let ctx = app.egui_ctx.clone();
         let full_output = ctx.run(raw_input, |ctx| app.ui(ctx));
         state.handle_platform_output(window, full_output.platform_output);
+        app.step_simulation();
 
         // 2. Render the 3D scene (cubes) first, then egui on top (Load).
         let frame = match gpu.surface.get_current_texture() {
