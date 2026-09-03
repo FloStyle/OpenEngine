@@ -1,13 +1,14 @@
 //! OpenEngine Editor Shell binary (Domain A) — winit 0.30 + wgpu 25 + egui 0.32.
-//! Composits the egui UI (toolbar/hierarchy/inspector) over a wgpu clear pass.
 
 mod app;
+mod renderer;
 
 use std::sync::Arc;
 
 use anyhow::Context;
 use app::EditorApp;
 use egui::ViewportId;
+use renderer::SceneRenderer;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
@@ -85,6 +86,7 @@ struct Shell {
     app: Option<EditorApp>,
     egui_state: Option<egui_winit::State>,
     egui_renderer: Option<egui_wgpu::Renderer>,
+    scene: Option<SceneRenderer>,
 }
 
 impl Shell {
@@ -95,6 +97,7 @@ impl Shell {
             app: None,
             egui_state: None,
             egui_renderer: None,
+            scene: None,
         }
     }
 }
@@ -114,6 +117,7 @@ impl ApplicationHandler for Shell {
                 .expect("create window"),
         );
         let gpu = pollster::block_on(Gpu::new(window.clone())).expect("init gpu");
+        let format = gpu.config.format;
 
         let egui_ctx = egui::Context::default();
         let mut app = EditorApp::new();
@@ -122,18 +126,19 @@ impl ApplicationHandler for Shell {
             egui_ctx,
             ViewportId::ROOT,
             window.as_ref(),
-            None, // native pixels per point
-            None, // theme
-            None, // max texture side
+            None,
+            None,
+            None,
         );
-        let egui_renderer =
-            egui_wgpu::Renderer::new(&gpu.device, gpu.config.format, None, 1, false);
+        let egui_renderer = egui_wgpu::Renderer::new(&gpu.device, format, None, 1, false);
+        let scene = SceneRenderer::new(&gpu.device, &gpu.queue, format);
 
         self.window = Some(window);
         self.gpu = Some(gpu);
         self.app = Some(app);
         self.egui_state = Some(egui_state);
         self.egui_renderer = Some(egui_renderer);
+        self.scene = Some(scene);
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -170,22 +175,23 @@ impl ApplicationHandler for Shell {
 
 impl Shell {
     fn render(&mut self) {
-        let (Some(window), Some(gpu), Some(app), Some(state), Some(renderer)) = (
+        let (Some(window), Some(gpu), Some(app), Some(state), Some(renderer), Some(scene)) = (
             &self.window,
             &mut self.gpu,
             &mut self.app,
             &mut self.egui_state,
             &mut self.egui_renderer,
+            &self.scene,
         ) else {
             return;
         };
-        // 1. Run egui.
+        // 1. Run egui to compute panels + the central viewport rect.
         let raw_input = state.take_egui_input(window);
         let ctx = app.egui_ctx.clone();
         let full_output = ctx.run(raw_input, |ctx| app.ui(ctx));
         state.handle_platform_output(window, full_output.platform_output);
 
-        // 2. Present: clear then paint egui.
+        // 2. Render the 3D scene (cubes) first, then egui on top (Load).
         let frame = match gpu.surface.get_current_texture() {
             Ok(f) => f,
             Err(e) => {
@@ -200,6 +206,21 @@ impl Shell {
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
+        if let Some(rect) = app.viewport_rect {
+            let aspect = (rect.width() / rect.height().max(1.0)).max(0.01);
+            let world = app.state.active_world();
+            scene.draw(
+                &gpu.device,
+                &gpu.queue,
+                &mut encoder,
+                &view,
+                world,
+                &app.camera,
+                aspect,
+            );
+        }
+
+        // 3. egui paint pass over the cubes (LoadOp::Load).
         let clipped = app
             .egui_ctx
             .tessellate(full_output.shapes, full_output.pixels_per_point);
@@ -212,7 +233,6 @@ impl Shell {
         }
         renderer.update_buffers(&gpu.device, &gpu.queue, &mut encoder, &clipped, &screen);
         {
-            // egui_wgpu 0.32 render takes a `RenderPass<'static>`.
             let mut pass = encoder
                 .begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("egui"),
@@ -220,12 +240,7 @@ impl Shell {
                         view: &view,
                         resolve_target: None,
                         ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color {
-                                r: 0.06,
-                                g: 0.07,
-                                b: 0.1,
-                                a: 1.0,
-                            }),
+                            load: wgpu::LoadOp::Load,
                             store: wgpu::StoreOp::Store,
                         },
                     })],

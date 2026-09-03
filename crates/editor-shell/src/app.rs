@@ -91,14 +91,16 @@ impl EditorApp {
         self.toolbar(ctx);
         self.hierarchy(ctx);
         self.inspector(ctx);
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let rect = ui.available_rect_before_wrap();
-            // Dark viewport background placeholder (real 3D pass in main.rs).
-            ui.painter()
-                .rect_filled(rect, 0.0, egui::Color32::from_rgb(16, 18, 26));
-            self.viewport_rect = Some(rect);
-            ui.label(egui::RichText::new("3D viewport (wgpu pass)").weak());
-        });
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ctx, |ui| {
+                let rect = ui.available_rect_before_wrap();
+                // Dark viewport background placeholder (real 3D pass in main.rs).
+                ui.painter()
+                    .rect_filled(rect, 0.0, egui::Color32::from_rgb(16, 18, 26));
+                self.viewport_rect = Some(rect);
+                ui.label(egui::RichText::new("3D viewport (wgpu pass)").weak());
+            });
     }
 
     fn toolbar(&mut self, ctx: &egui::Context) {
