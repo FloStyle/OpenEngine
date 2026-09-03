@@ -1,0 +1,29 @@
+[package]
+name = "openengine-editor-shell"
+description = "Domain A: egui 0.32 editor shell over wgpu 25 (viewport/hierarchy/inspector/toolbar), separate from headless openengine-editor."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "openengine-editor-shell"
+path = "src/main.rs"
+
+[dependencies]
+egui.workspace = true
+egui-wgpu.workspace = true
+egui-winit.workspace = true
+wgpu.workspace = true
+winit.workspace = true
+openengine-editor = { path = "../editor" }
+openengine-ecs = { path = "../ecs" }
+openengine-contracts = { workspace = true }
+openengine-math = { workspace = true }
+bytemuck.workspace = true
+glam.workspace = true
+pollster.workspace = true
+anyhow.workspace = true
+
+[lints]
+workspace = true

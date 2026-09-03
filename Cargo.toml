@@ -22,6 +22,9 @@ members = [
     "crates/core",
     "crates/ecs",
     "crates/editor",
+    # Domain A — editor shell (egui 0.32 over wgpu 25). Separate so crates/editor
+    # stays headless/CI-friendly.
+    "crates/editor-shell",
     # Domain B — game logic. Pure, no_std, deterministic. May NOT pull Domain A.
     "crates/logic-sandbox",
     # Domain B — wasm cdylib that carries the #[no_mangle] ABI trampoline.
@@ -58,8 +61,9 @@ wgpu     = { version = "25.0", default-features = false, features = ["vulkan", "
 winit    = { version = "0.30", features = ["rwh_06"] }
 wasmtime = { version = "26.0", default-features = false, features = ["cranelift", "runtime"] }
 
-egui     = { version = "0.31", default-features = false, features = ["default_fonts"] }
-egui-wgpu = { version = "0.31", default-features = false }
+egui     = { version = "0.32", default-features = false, features = ["default_fonts"] }
+egui-wgpu = { version = "0.32", default-features = false, features = ["winit"] }
+egui-winit = { version = "0.32", default-features = false, features = ["wayland", "x11"] }
 
 # ---- Host ergonomics (Domain A only) --------------------------------------
 pollster = { version = "0.4" }
