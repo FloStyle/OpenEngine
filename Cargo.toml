@@ -31,6 +31,9 @@ members = [
     "crates/logic-export",
     # Domain B math — no_std, deterministic fixed-point.
     "crates/math",
+    # Domain A — harness core. Headless JSON-over-HTTP door for live-state
+    # observe/mutate/verify (agent + human). No GPU/winit/wgpu.
+    "crates/harness",
 ]
 # Deliberately NO wildcard member globs: onboarding a crate is an intentional
 # act that requires its Cargo.toml + lib.rs + lint review to exist first.
