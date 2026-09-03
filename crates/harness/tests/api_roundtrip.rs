@@ -215,3 +215,68 @@ fn transaction_rolls_back_on_failing_op() {
     assert_eq!(o["entity_count"], before);
     assert_eq!(o["entities"][0]["transform"][0], 0.0);
 }
+
+#[test]
+fn save_then_load_preserves_world_bit_for_bit() {
+    let mut s = HarnessState::new();
+    post(
+        &mut s,
+        "/spawn",
+        r#"{"transform":[0,0,0],"scale":[1,1,1],"color":[10,20,30,255]}"#,
+    );
+    post(
+        &mut s,
+        "/spawn",
+        r#"{"transform":[-4,2,7],"scale":[2,1,1],"color":[200,0,90,255]}"#,
+    );
+    let h_before = format!("{:016x}", s.hash());
+
+    let path =
+        std::env::temp_dir().join(format!("openengine_scene_test_{}.json", std::process::id()));
+    let p = path.to_str().unwrap();
+    let (c, r) = post(&mut s, "/save", &format!(r#"{{"path":"{p}"}}"#));
+    assert_eq!(c, 200, "save failed: {r}");
+    assert_eq!(r["entities"], 2);
+
+    let mut fresh = HarnessState::new();
+    let (c, r) = post(&mut fresh, "/load", &format!(r#"{{"path":"{p}"}}"#));
+    assert_eq!(c, 200, "load failed: {r}");
+    let h_after = format!("{:016x}", fresh.hash());
+    assert_eq!(
+        h_before, h_after,
+        "save/load round-trip must preserve the world bit-for-bit"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn scene_round_trip_then_ticks_stay_deterministic() {
+    let mut s = HarnessState::new();
+    post(
+        &mut s,
+        "/spawn",
+        r#"{"transform":[1,0,0],"color":[255,255,255,255]}"#,
+    );
+    let path =
+        std::env::temp_dir().join(format!("openengine_scene_det_{}.json", std::process::id()));
+    let p = path.to_str().unwrap();
+    let (c0, _) = post(&mut s, "/save", &format!(r#"{{"path":"{p}"}}"#));
+    assert_eq!(c0, 200);
+
+    let mut a = HarnessState::new();
+    let (_, _) = post(&mut a, "/load", &format!(r#"{{"path":"{p}"}}"#));
+    let mut b = HarnessState::new();
+    let (_, _) = post(&mut b, "/load", &format!(r#"{{"path":"{p}"}}"#));
+    let (ca, _) = post(&mut a, "/tick", r#"{"n":300}"#);
+    let (cb, _) = post(&mut b, "/tick", r#"{"n":300}"#);
+    assert_eq!(ca, 200);
+    assert_eq!(cb, 200);
+    let (_, oa) = get(&mut a, "/hash");
+    let (_, ob) = get(&mut b, "/hash");
+    assert_eq!(
+        hex(&oa),
+        hex(&ob),
+        "two loads of the same scene must tick identically"
+    );
+    let _ = std::fs::remove_file(&path);
+}

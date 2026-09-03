@@ -40,7 +40,7 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
             "status": "ok",
             "version": VERSION,
             "headless": true,
-            "capabilities": ["observe", "spawn", "despawn", "set", "tick", "hash", "load_wasm", "prove", "transaction"],
+            "capabilities": ["observe", "spawn", "despawn", "set", "tick", "hash", "load_wasm", "prove", "transaction", "save", "load"],
         })),
         ("GET", "/spec") => ok(json!({
             "service": "openengine-harness",
@@ -56,7 +56,9 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
                 {"method":"GET","path":"/hash","desc":"determinism hash"},
                 {"method":"POST","path":"/load_wasm","body":"{\"path\":\"...\"}"},
                 {"method":"POST","path":"/prove","body":"{\"n\":100}","desc":"determinism PASS/FAIL over two fresh states"},
-                {"method":"POST","path":"/transaction","body":"{\"ops\":[{method,path,body},...]}","desc":"atomic batch, rollback on any failing op"}
+                {"method":"POST","path":"/transaction","body":"{\"ops\":[{method,path,body},...]}","desc":"atomic batch, rollback on any failing op"},
+                {"method":"POST","path":"/save","body":"{\"path\":\"scene.json\"}","desc":"write current scene to a file"},
+                {"method":"POST","path":"/load","body":"{\"path\":\"scene.json\"}","desc":"load a scene file into the world"}
             ]
         })),
         ("GET", "/hash") => {
@@ -217,6 +219,44 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
                 }
             }
             ok(json!({ "ok": true, "applied": ops.len(), "entity_count": state.entity_count() }))
+        }
+        // ── Scene persistence (spec 16): save/load a portable scene file ──
+        ("POST", "/save") => {
+            let v: Value = match serde_json::from_slice(body) {
+                Ok(x) => x,
+                Err(e) => return err(400, format!("bad json: {e}")),
+            };
+            let path = match v.get("path").and_then(|x| x.as_str()) {
+                Some(p) => p.to_string(),
+                None => return err(400, "missing 'path'"),
+            };
+            let scene = state.export_scene();
+            match std::fs::write(&path, serde_json::to_vec_pretty(&scene).unwrap_or_default()) {
+                Ok(()) => ok(json!({ "ok": true, "path": path, "entities": scene.entities.len() })),
+                Err(e) => err(500, format!("write {path}: {e}")),
+            }
+        }
+        ("POST", "/load") => {
+            let v: Value = match serde_json::from_slice(body) {
+                Ok(x) => x,
+                Err(e) => return err(400, format!("bad json: {e}")),
+            };
+            let path = match v.get("path").and_then(|x| x.as_str()) {
+                Some(p) => p.to_string(),
+                None => return err(400, "missing 'path'"),
+            };
+            match std::fs::read(&path) {
+                Ok(bytes) => match serde_json::from_slice::<crate::state::SceneFile>(&bytes) {
+                    Ok(scene) => match state.import_scene(&scene) {
+                        Ok(()) => ok(
+                            json!({ "ok": true, "path": path, "entities": scene.entities.len() }),
+                        ),
+                        Err(e) => err(400, e),
+                    },
+                    Err(e) => err(400, format!("bad scene json: {e}")),
+                },
+                Err(e) => err(500, format!("read {path}: {e}")),
+            }
         }
         _ => err(404, format!("no route: {method} {path}")),
     }

@@ -28,6 +28,34 @@ pub struct EntityView {
     pub color: [u8; 4],
 }
 
+/// Versioned, portable scene file. `version` lets a future engine reject or
+/// migrate files written by an older ABI. Fixed values are stored losslessly as
+/// `f32` (their `2^-16` steps fit exactly in an `f32` mantissa), so a
+/// save→load round-trip preserves the bit-identical world (`World::hash()`).
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SceneFile {
+    pub version: u32,
+    pub tick: u64,
+    pub entities: Vec<SceneEntity>,
+}
+
+/// One entity's authored components (all SoA columns, in game terms).
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SceneEntity {
+    pub transform: [f32; 3],
+    pub scale: [f32; 3],
+    pub color: [u8; 4],
+    pub velocity: [f32; 3],
+    pub actor_kind: u32,
+    pub actor_seed: u32,
+    pub grounded: u32,
+    pub jump_cd: u32,
+    pub move_speed: f32,
+    pub jump_force: f32,
+}
+
+pub const SCENE_VERSION: u32 = 1;
+
 fn fx(v: f32) -> F {
     F::from_num(v)
 }
@@ -272,6 +300,112 @@ impl HarnessState {
     /// Determinism hash of the world (`World::hash()`).
     pub fn hash(&self) -> u64 {
         self.world.hash()
+    }
+
+    /// Export the whole world as a portable [`SceneFile`] (all columns).
+    pub fn export_scene(&self) -> SceneFile {
+        let n = self.world.entity_count();
+        let transforms = self.world.get_transforms().unwrap_or(&[]);
+        let vels = self.world.get_velocity_3d().unwrap_or(&[]);
+        let actors = self.world.get_actors().unwrap_or(&[]);
+        let colors = self.world.get_colors().unwrap_or(&[]);
+        let mut entities = Vec::with_capacity(n);
+        for i in 0..n {
+            let t = transforms
+                .get(i)
+                .copied()
+                .unwrap_or_else(|| tx([0.0; 3], [1.0; 3]));
+            let v = vels.get(i).copied().unwrap_or(Velocity3D::zero());
+            let a = actors.get(i).copied().unwrap_or_else(|| Actor::npc(1, 1));
+            let c = colors.get(i).copied().unwrap_or(Color {
+                r: 255,
+                g: 255,
+                b: 255,
+                a: 255,
+            });
+            entities.push(SceneEntity {
+                transform: [
+                    t.position[0].to_num(),
+                    t.position[1].to_num(),
+                    t.position[2].to_num(),
+                ],
+                scale: [
+                    t.scale[0].to_num(),
+                    t.scale[1].to_num(),
+                    t.scale[2].to_num(),
+                ],
+                color: [c.r, c.g, c.b, c.a],
+                velocity: [
+                    v.linear[0].to_num(),
+                    v.linear[1].to_num(),
+                    v.linear[2].to_num(),
+                ],
+                actor_kind: a.kind,
+                actor_seed: a.seed,
+                grounded: a.grounded,
+                jump_cd: a.jump_cd,
+                move_speed: a.move_speed.to_num(),
+                jump_force: a.jump_force.to_num(),
+            });
+        }
+        SceneFile {
+            version: SCENE_VERSION,
+            tick: self.tick,
+            entities,
+        }
+    }
+
+    /// Build a world from a [`SceneFile`]. Rejects an incompatible version.
+    pub fn scene_to_world(scene: &SceneFile) -> Result<World, String> {
+        if scene.version != SCENE_VERSION {
+            return Err(format!("unsupported scene version {}", scene.version));
+        }
+        let mut w = World::new();
+        for e in &scene.entities {
+            let idx = w.spawn(
+                Position {
+                    x: fx(0.0),
+                    y: fx(0.0),
+                },
+                Velocity {
+                    x: fx(0.0),
+                    y: fx(0.0),
+                },
+                Color {
+                    r: e.color[0],
+                    g: e.color[1],
+                    b: e.color[2],
+                    a: e.color[3],
+                },
+            );
+            w.set_transform(idx, tx(e.transform, e.scale));
+            w.set_velocity_3d(
+                idx,
+                Velocity3D {
+                    linear: [fx(e.velocity[0]), fx(e.velocity[1]), fx(e.velocity[2])],
+                },
+            );
+            w.set_actor(
+                idx,
+                Actor {
+                    kind: e.actor_kind,
+                    seed: e.actor_seed,
+                    grounded: e.grounded,
+                    jump_cd: e.jump_cd,
+                    move_speed: fx(e.move_speed),
+                    jump_force: fx(e.jump_force),
+                },
+            );
+        }
+        Ok(w)
+    }
+
+    /// Replace this world+tick from a [`SceneFile`] (used by `/load`).
+    pub fn import_scene(&mut self, scene: &SceneFile) -> Result<(), String> {
+        let w = Self::scene_to_world(scene)?;
+        self.world = w;
+        self.tick = scene.tick;
+        Ok(())
     }
 
     /// Snapshot up to `limit` entities.

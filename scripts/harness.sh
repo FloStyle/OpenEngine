@@ -28,6 +28,8 @@ case "$cmd" in
   load)      post /load_wasm ;;
   prove)     post /prove ;;
   tx)        post /transaction ;;
-  *) echo "usage: $0 health|spec|observe|hash|spawn|despawn|set|tick|load|prove|tx [json]" >&2; exit 2 ;;
+  save)      post /save ;;
+  load-scene) post /load ;;
+  *) echo "usage: $0 health|spec|observe|hash|spawn|despawn|set|tick|load|prove|tx|save|load-scene [json]" >&2; exit 2 ;;
 esac
 echo
