@@ -96,3 +96,95 @@ pub extern "C" fn openengine_tick(tick: u64, out_ptr: u32, out_cap: u32) -> u32 
         Err(_) => 0,
     }
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+
+// ────────────────────────────────────────────────────────────────────────────
+// § SoA movement bridge (Phase 3 / ADR-0001)
+//
+// Transport only. The host writes `[postcard(columns)][column arena]` into a
+// guest buffer (via openengine_alloc); this tick reads it back (transport
+// `unsafe` is sanctioned in this shim crate — the pure logic in
+// logic-sandbox stays `forbid(unsafe_code)`), runs the movement system, and
+// writes the encoded WorldDelta into the host output buffer.
+// ────────────────────────────────────────────────────────────────────────────
+
+use openengine_contracts::comp;
+use openengine_contracts::{ColumnDescriptor, Position, Velocity};
+
+/// Run one movement tick.
+///
+/// `input_ptr/input_len`: host-written `[postcard(columns)][arena]`.
+/// `out_ptr/out_cap`: host output buffer for the encoded WorldDelta.
+/// Returns the number of output bytes, or 0 on failure.
+///
+/// # Safety
+/// `input_ptr..+input_len` and `out_ptr..+out_cap` are valid guest linear-memory
+/// regions owned by the host (obtained via `openengine_alloc`). Reads and writes
+/// are length-checked. This is transport-only; no gameplay logic is here.
+#[no_mangle]
+pub unsafe extern "C" fn openengine_move_tick(
+    input_ptr: u32,
+    input_len: u32,
+    out_ptr: u32,
+    out_cap: u32,
+) -> u32 {
+    // SAFETY: caller guarantees the input region is readable for input_len.
+    let input_bytes: &[u8] = unsafe { core::slice::from_raw_parts(input_ptr as *const u8, input_len as usize) };
+
+    // Layout: [postcard Vec<ColumnDescriptor>][column arena].
+    let (columns, arena) = match postcard::take_from_bytes::<Vec<ColumnDescriptor>>(input_bytes) {
+        Ok(v) => v,
+        Err(_) => return 0,
+    };
+
+    let positions: Vec<Position> = read_column(&columns, arena, comp::POSITION);
+    let velocities: Vec<Velocity> = read_column(&columns, arena, comp::VELOCITY);
+    let n = positions.len().min(velocities.len());
+
+    // Run the PURE movement logic (forbid(unsafe_code)) on owned slices.
+    let delta = match openengine_logic_sandbox::movement_system(&positions[..n], &velocities[..n]) {
+        Ok(d) => d,
+        Err(_) => return 0,
+    };
+    let bytes = match openengine_contracts::encode_delta(&delta) {
+        Ok(b) => b,
+        Err(_) => return 0,
+    };
+    if bytes.len() > out_cap as usize || bytes.is_empty() {
+        return 0;
+    }
+    // SAFETY: out_ptr..out_ptr+n is a writable guest buffer of out_cap bytes.
+    unsafe {
+        core::ptr::copy_nonoverlapping(bytes.as_ptr(), out_ptr as *mut u8, bytes.len());
+    }
+    bytes.len() as u32
+}
+
+/// Read a column (described by `descriptors`) out of `arena` into an owned
+/// `Vec` using unaligned-safe pod reads (alignment of the arena start is not
+/// guaranteed after a postcard length prefix).
+fn read_column<T: bytemuck::Pod>(
+    descriptors: &[ColumnDescriptor],
+    arena: &[u8],
+    component_id: u32,
+) -> Vec<T> {
+    let column = match descriptors.iter().find(|c| c.component_id.0 == component_id) {
+        Some(c) => c,
+        None => return Vec::new(),
+    };
+    let start = column.data_offset as usize;
+    let end = start + (column.count as usize * column.element_size as usize);
+    if end > arena.len() {
+        return Vec::new();
+    }
+    let bytes = &arena[start..end];
+    let es = core::mem::size_of::<T>();
+    let mut out = Vec::with_capacity(bytes.len() / es);
+    let mut off = 0usize;
+    while off + es <= bytes.len() {
+        out.push(bytemuck::pod_read_unaligned::<T>(&bytes[off..off + es]));
+        off += es;
+    }
+    out
+}

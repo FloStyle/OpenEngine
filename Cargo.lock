@@ -1395,6 +1395,7 @@ dependencies = [
  "openengine-ecs",
  "openengine-math",
  "pollster",
+ "postcard",
  "rayon",
  "wasmtime",
  "wgpu",
@@ -1423,16 +1424,19 @@ dependencies = [
 name = "openengine-logic-export"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "dlmalloc",
  "openengine-contracts",
  "openengine-logic-sandbox",
  "openengine-math",
+ "postcard",
 ]
 
 [[package]]
 name = "openengine-logic-sandbox"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "openengine-contracts",
  "openengine-math",
 ]

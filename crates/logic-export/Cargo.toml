@@ -14,6 +14,9 @@ crate-type = ["cdylib"]
 openengine-logic-sandbox = { workspace = true }
 openengine-contracts = { workspace = true }
 openengine-math = { workspace = true }
+# SoA bridge (Phase 3 / ADR-0001): parse/cast + guest buffer mutex.
+bytemuck.workspace = true
+postcard.workspace = true
 # Guest heap allocator for the no_std wasm artifact.
 dlmalloc = { workspace = true, optional = true }
 

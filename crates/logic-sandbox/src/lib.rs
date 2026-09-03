@@ -169,3 +169,113 @@ mod tests {
         ));
     }
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// § SoA bridge movement (Phase 3 / ADR-0001)
+//
+// Pure function: given read-only SoA `Position`/`Velocity` slices (bytes that
+// the host wrote into a guest-allocated buffer), returns a batched `WorldDelta`
+// of new positions/velocities. This is Domain B logic — no `unsafe`, no I/O,
+// fixed-point only. It is byte-identical to `openengine_core::native_movement`.
+// ────────────────────────────────────────────────────────────────────────────
+
+use alloc::vec;
+use alloc::vec::Vec;
+use openengine_contracts::comp;
+use openengine_contracts::{ArchetypeId, ColumnWrite, ComponentId, Position, Velocity};
+use openengine_math::I16F16;
+
+/// Wall bounds (same units as the native demo).
+const WALL_MIN: i32 = 0;
+const WALL_MAX: i32 = 500;
+
+/// Run one movement tick over the supplied SoA slices.
+pub fn movement_system(
+    positions: &[Position],
+    velocities: &[Velocity],
+) -> Result<WorldDelta, RecoverableError> {
+    let n = core::cmp::min(positions.len(), velocities.len());
+    let mut new_pos: Vec<Position> = Vec::with_capacity(n);
+    let mut new_vel: Vec<Velocity> = Vec::with_capacity(n);
+    for i in 0..n {
+        let p = positions[i];
+        let v = velocities[i];
+        let nx = p.x + v.x;
+        let ny = p.y + v.y;
+        let (fx, vx) = if nx < I16F16::from_num(WALL_MIN) || nx > I16F16::from_num(WALL_MAX) {
+            (p.x, -v.x)
+        } else {
+            (nx, v.x)
+        };
+        let (fy, vy) = if ny < I16F16::from_num(WALL_MIN) || ny > I16F16::from_num(WALL_MAX) {
+            (p.y, -v.y)
+        } else {
+            (ny, v.y)
+        };
+        new_pos.push(Position { x: fx, y: fy });
+        new_vel.push(Velocity { x: vx, y: vy });
+    }
+
+    let indices: Vec<u32> = (0..n as u32).collect();
+    let mut delta = WorldDelta::default();
+    delta.writes.push(ColumnWrite {
+        archetype: ArchetypeId(0),
+        component: ComponentId(comp::POSITION),
+        indices: indices.clone(),
+        payload: pack(&new_pos),
+    });
+    delta.writes.push(ColumnWrite {
+        archetype: ArchetypeId(0),
+        component: ComponentId(comp::VELOCITY),
+        indices,
+        payload: pack(&new_vel),
+    });
+    Ok(delta)
+}
+
+/// Pack `Pod` rows into a contiguous byte payload for a batched column write.
+fn pack<T: bytemuck::Pod>(rows: &[T]) -> Vec<u8> {
+    let mut out = vec![0u8; core::mem::size_of_val(rows)];
+    let mut i = 0usize;
+    for row in rows {
+        let b = bytemuck::bytes_of(row);
+        out[i..i + b.len()].copy_from_slice(b);
+        i += b.len();
+    }
+    out
+}
+
+#[cfg(test)]
+mod movement_tests {
+    use super::*;
+    use openengine_contracts::Position;
+
+    fn world(count: usize) -> (Vec<Position>, Vec<Velocity>) {
+        let pos: Vec<Position> = (0..count)
+            .map(|i| Position { x: I16F16::from_num(((i % 10) as i32) * 50), y: I16F16::from_num(((i / 10) as i32) * 50) })
+            .collect();
+        let vel = vec![Velocity { x: I16F16::from_num(5), y: I16F16::from_num(5) }; count];
+        (pos, vel)
+    }
+
+    #[test]
+    fn movement_is_deterministic() {
+        let (p1, v1) = world(100);
+        let (p2, v2) = world(100);
+        let d1 = movement_system(&p1, &v1).unwrap();
+        let d2 = movement_system(&p2, &v2).unwrap();
+        assert_eq!(d1.writes.len(), 2);
+        assert_eq!(d1.writes[0].payload, d2.writes[0].payload);
+        assert_eq!(d1.writes[1].payload, d2.writes[1].payload);
+    }
+
+    #[test]
+    fn bounce_pins_at_wall() {
+        let pos = vec![Position { x: I16F16::from_num(498), y: I16F16::from_num(0) }];
+        let vel = vec![Velocity { x: I16F16::from_num(10), y: I16F16::from_num(0) }];
+        let d = movement_system(&pos, &vel).unwrap();
+        // payload is one packed Position; read x (first 4 bytes) back.
+        let px = i32::from_le_bytes(d.writes[0].payload[0..4].try_into().unwrap());
+        assert_eq!(px, 498 << 16);
+    }
+}

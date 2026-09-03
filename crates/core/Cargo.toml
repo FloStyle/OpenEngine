@@ -15,6 +15,7 @@ openengine-contracts = { workspace = true }
 openengine-ecs = { workspace = true }
 openengine-math = { workspace = true }
 bytemuck.workspace = true
+postcard.workspace = true
 pollster.workspace = true
 anyhow.workspace = true
 

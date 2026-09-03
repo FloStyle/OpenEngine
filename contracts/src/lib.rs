@@ -208,6 +208,61 @@ pub enum ViewMode {
     Lit = 3,
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// § 0.0 Shared fixed-point components (no_std, cross-domain)
+//       Canonical Position/Velocity/Color for the SoA bridge (ADR-0001) and
+//       spec-21 registry (Position=0, Velocity=1, Color=72). Both the host ECS
+//       and the no_std wasm guest read the SAME byte layout.
+// ────────────────────────────────────────────────────────────────────────────
+
+/// 16.16 fixed alias (== `openengine_math::I16F16`); used so `contracts` needs
+/// no extra crate dependency for the bridge component types.
+pub type Fx16 = fixed::FixedI32<fixed::types::extra::U16>;
+
+/// Registry-stable component ids used by the SoA bridge.
+pub mod comp {
+    /// Position (2D) — spec-21 id 0.
+    pub const POSITION: u32 = 0;
+    /// Velocity (2D) — spec-21 id 1.
+    pub const VELOCITY: u32 = 1;
+    /// Color — spec-21 engine id 72.
+    pub const COLOR: u32 = 72;
+}
+
+/// 2D position, fixed-point, `#[repr(C)] Pod`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct Position {
+    /// X coordinate.
+    pub x: Fx16,
+    /// Y coordinate.
+    pub y: Fx16,
+}
+
+/// 2D velocity, fixed-point, `#[repr(C)] Pod`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct Velocity {
+    /// X velocity.
+    pub x: Fx16,
+    /// Y velocity.
+    pub y: Fx16,
+}
+
+/// RGBA color (host rendering; not gameplay math).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct Color {
+    /// Red.
+    pub r: u8,
+    /// Green.
+    pub g: u8,
+    /// Blue.
+    pub b: u8,
+    /// Alpha.
+    pub a: u8,
+}
+
 
 // ────────────────────────────────────────────────────────────────────────────
 // § 0. Handles & identifiers
