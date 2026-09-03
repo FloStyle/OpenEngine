@@ -48,5 +48,10 @@ pub struct Color {
 
 impl Color {
     /// Opaque white.
-    pub const WHITE: Color = Color { r: 255, g: 255, b: 255, a: 255 };
+    pub const WHITE: Color = Color {
+        r: 255,
+        g: 255,
+        b: 255,
+        a: 255,
+    };
 }

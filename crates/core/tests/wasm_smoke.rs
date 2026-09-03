@@ -21,7 +21,9 @@ fn wasm_module_loads_and_runs_a_tick() {
     let module = wasmtime::Module::from_file(&engine, WASM_ASSET).expect("compile wasm");
     let mut store = wasmtime::Store::new(&engine, ());
     let linker = wasmtime::Linker::new(&engine);
-    let instance = linker.instantiate(&mut store, &module).expect("instantiate");
+    let instance = linker
+        .instantiate(&mut store, &module)
+        .expect("instantiate");
 
     let alloc = instance
         .get_typed_func::<u32, u32>(&mut store, "openengine_alloc")
@@ -35,7 +37,9 @@ fn wasm_module_loads_and_runs_a_tick() {
 
     let cap = 4096u32;
     let buf = alloc.call(&mut store, cap).expect("allocate guest buffer");
-    let n = tick.call(&mut store, (1, buf, cap)).expect("run a guest tick");
+    let n = tick
+        .call(&mut store, (1, buf, cap))
+        .expect("run a guest tick");
     assert!(n > 0, "guest tick must return an encoded WorldDelta");
     assert!(n as usize <= cap as usize);
 

@@ -113,7 +113,10 @@ pub struct AssetRef {
 impl AssetRef {
     /// Construct from a logical asset kind.
     pub const fn new(id: u64, kind: AssetKind) -> Self {
-        AssetRef { id, kind: kind.to_u8() }
+        AssetRef {
+            id,
+            kind: kind.to_u8(),
+        }
     }
     /// The resolved asset kind (returns `AssetKind::Scene` fallback for an
     /// unknown raw discriminant — unknown kinds are host-logged, never lost).
@@ -127,7 +130,17 @@ impl AssetRef {
 /// An opaque handle to a loaded audio voice/stream (spec 14). Domain A plays;
 /// Domain B only ever holds this id.
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug, bytemuck::Pod, bytemuck::Zeroable, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Debug,
+    bytemuck::Pod,
+    bytemuck::Zeroable,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct AudioHandle(pub u64);
 
 /// Minimal deterministic network/rollback state carried across the wire
@@ -155,7 +168,10 @@ pub struct FixedString<const N: usize> {
 }
 
 impl<const N: usize> FixedString<N> {
-    pub const EMPTY: Self = FixedString { bytes: [0; N], len: 0 };
+    pub const EMPTY: Self = FixedString {
+        bytes: [0; N],
+        len: 0,
+    };
 
     /// Build from a `&str`, truncating to `N` bytes if needed.
     pub fn new(s: &str) -> Self {
@@ -163,7 +179,10 @@ impl<const N: usize> FixedString<N> {
         let n = core::cmp::min(src.len(), N);
         let mut bytes = [0u8; N];
         bytes[..n].copy_from_slice(&src[..n]);
-        FixedString { bytes, len: n as u32 }
+        FixedString {
+            bytes,
+            len: n as u32,
+        }
     }
     /// The contained string (UTF-8 prefix by construction from [`FixedString::new`]).
     pub fn as_str(&self) -> alloc::string::String {
@@ -190,7 +209,10 @@ impl<'de, const N: usize> serde::Deserialize<'de> for FixedString<N> {
             fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
                 Ok(FixedString::new(v))
             }
-            fn visit_string<E: serde::de::Error>(self, v: alloc::string::String) -> Result<Self::Value, E> {
+            fn visit_string<E: serde::de::Error>(
+                self,
+                v: alloc::string::String,
+            ) -> Result<Self::Value, E> {
                 Ok(FixedString::new(&v))
             }
         }
@@ -262,7 +284,6 @@ pub struct Color {
     /// Alpha.
     pub a: u8,
 }
-
 
 // ────────────────────────────────────────────────────────────────────────────
 // § 0. Handles & identifiers
@@ -424,10 +445,16 @@ pub struct FatalError {
 
 impl FatalError {
     pub const fn numeric(code: u32) -> Self {
-        FatalError { code, message: None }
+        FatalError {
+            code,
+            message: None,
+        }
     }
     pub fn detailed(code: u32, message: impl Into<alloc::string::String>) -> Self {
-        FatalError { code, message: Some(message.into()) }
+        FatalError {
+            code,
+            message: Some(message.into()),
+        }
     }
 }
 

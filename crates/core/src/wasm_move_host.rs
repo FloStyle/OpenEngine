@@ -7,7 +7,7 @@
 //! 4. read + decode the returned `WorldDelta`.
 
 use anyhow::Context;
-use openengine_contracts::{ColumnDescriptor, ComponentId, WorldDelta, comp};
+use openengine_contracts::{comp, ColumnDescriptor, ComponentId, WorldDelta};
 use openengine_ecs::{Position, Velocity, World};
 use wasmtime::{Engine, Instance, Linker, Memory, Module, Store, TypedFunc};
 
@@ -33,8 +33,9 @@ impl WasmMoveHost {
         let module = Module::from_file(&engine, wasm_path).context("load wasm module")?;
         let mut store = Store::new(&engine, ());
         let linker = Linker::new(&engine);
-        let instance: Instance =
-            linker.instantiate(&mut store, &module).context("instantiate logic module")?;
+        let instance: Instance = linker
+            .instantiate(&mut store, &module)
+            .context("instantiate logic module")?;
 
         let alloc = instance
             .get_typed_func::<u32, u32>(&mut store, "openengine_alloc")
@@ -98,7 +99,15 @@ impl WasmMoveHost {
 
         let out_len = self
             .tick
-            .call(&mut self.store, (self.input_ptr, input.len() as u32, self.output_ptr, OUTPUT_CAP))
+            .call(
+                &mut self.store,
+                (
+                    self.input_ptr,
+                    input.len() as u32,
+                    self.output_ptr,
+                    OUTPUT_CAP,
+                ),
+            )
             .context("guest movement tick")?;
         if out_len == 0 || out_len as usize > OUTPUT_CAP as usize {
             anyhow::bail!("guest movement tick returned invalid length ({out_len})");

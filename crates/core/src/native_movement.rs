@@ -79,9 +79,20 @@ mod tests {
     fn bounces_off_walls_deterministically() {
         let mut world = World::new();
         world.spawn(
-            Position { x: I16F16::from_num(490), y: I16F16::from_num(490) },
-            Velocity { x: I16F16::from_num(20), y: I16F16::from_num(20) },
-            Color { r: 255, g: 0, b: 0, a: 255 },
+            Position {
+                x: I16F16::from_num(490),
+                y: I16F16::from_num(490),
+            },
+            Velocity {
+                x: I16F16::from_num(20),
+                y: I16F16::from_num(20),
+            },
+            Color {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
         );
         // Crossing the wall flips velocity and pins position at the wall.
         let delta = native_movement_system(&world);

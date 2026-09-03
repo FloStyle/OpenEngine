@@ -11,9 +11,20 @@ fn create_test_world() -> World {
         let x = i % 10;
         let y = i / 10;
         world.spawn(
-            Position { x: I16F16::from_num(x * 50), y: I16F16::from_num(y * 50) },
-            Velocity { x: I16F16::from_num(5), y: I16F16::from_num(5) },
-            Color { r: 255, g: 0, b: 0, a: 255 },
+            Position {
+                x: I16F16::from_num(x * 50),
+                y: I16F16::from_num(y * 50),
+            },
+            Velocity {
+                x: I16F16::from_num(5),
+                y: I16F16::from_num(5),
+            },
+            Color {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
         );
     }
     world
@@ -59,7 +70,10 @@ fn positions_stay_in_bounds_after_many_ticks() {
     let positions = world.get_positions().unwrap();
     let vel = world.get_velocities().unwrap();
     for i in 0..world.entity_count() {
-        let (x, y) = (positions[i].x.to_num::<i32>(), positions[i].y.to_num::<i32>());
+        let (x, y) = (
+            positions[i].x.to_num::<i32>(),
+            positions[i].y.to_num::<i32>(),
+        );
         assert!((0..=500).contains(&x), "entity {i} x out of bounds: {x}");
         assert!((0..=500).contains(&y), "entity {i} y out of bounds: {y}");
         // Velocity magnitude is conserved (only direction flips on bounce).

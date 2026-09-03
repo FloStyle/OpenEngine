@@ -113,14 +113,16 @@ impl World {
                     POSITION => {
                         if let Some(col) = self.storage.get_column_mut::<Position>(POSITION) {
                             if (*idx as usize) < col.len() {
-                                col[*idx as usize] = bytemuck::pod_read_unaligned::<Position>(bytes);
+                                col[*idx as usize] =
+                                    bytemuck::pod_read_unaligned::<Position>(bytes);
                             }
                         }
                     }
                     VELOCITY => {
                         if let Some(col) = self.storage.get_column_mut::<Velocity>(VELOCITY) {
                             if (*idx as usize) < col.len() {
-                                col[*idx as usize] = bytemuck::pod_read_unaligned::<Velocity>(bytes);
+                                col[*idx as usize] =
+                                    bytemuck::pod_read_unaligned::<Velocity>(bytes);
                             }
                         }
                     }

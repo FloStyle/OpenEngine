@@ -9,9 +9,20 @@ fn create_test_world(count: usize) -> World {
         let x = (i % 32) as i32;
         let y = (i / 32) as i32;
         world.spawn(
-            Position { x: I16F16::from_num(x * 10), y: I16F16::from_num(y * 10) },
-            Velocity { x: I16F16::from_num(1), y: I16F16::from_num(1) },
-            Color { r: (i % 256) as u8, g: ((i * 2) % 256) as u8, b: ((i * 3) % 256) as u8, a: 255 },
+            Position {
+                x: I16F16::from_num(x * 10),
+                y: I16F16::from_num(y * 10),
+            },
+            Velocity {
+                x: I16F16::from_num(1),
+                y: I16F16::from_num(1),
+            },
+            Color {
+                r: (i % 256) as u8,
+                g: ((i * 2) % 256) as u8,
+                b: ((i * 3) % 256) as u8,
+                a: 255,
+            },
         );
     }
     world
@@ -62,7 +73,11 @@ fn fixed_point_is_deterministic() {
     let b = I16F16::from_num(2);
     let first = (a + b).to_bits();
     for _ in 0..100 {
-        assert_eq!((a + b).to_bits(), first, "fixed-point math must be deterministic");
+        assert_eq!(
+            (a + b).to_bits(),
+            first,
+            "fixed-point math must be deterministic"
+        );
     }
 }
 

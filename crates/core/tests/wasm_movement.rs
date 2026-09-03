@@ -17,9 +17,20 @@ fn create_test_world() -> World {
         let x = (i % 10) * 50;
         let y = (i / 10) * 50;
         world.spawn(
-            Position { x: I16F16::from_num(x), y: I16F16::from_num(y) },
-            Velocity { x: I16F16::from_num(5), y: I16F16::from_num(5) },
-            Color { r: 255, g: 0, b: 0, a: 255 },
+            Position {
+                x: I16F16::from_num(x),
+                y: I16F16::from_num(y),
+            },
+            Velocity {
+                x: I16F16::from_num(5),
+                y: I16F16::from_num(5),
+            },
+            Color {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
         );
     }
     world
@@ -32,7 +43,11 @@ fn simulate_native(world: &mut World, ticks: usize) {
     }
 }
 
-fn simulate_wasm(world: &mut World, host: &mut WasmMoveHost, ticks: usize) -> Result<(), anyhow::Error> {
+fn simulate_wasm(
+    world: &mut World,
+    host: &mut WasmMoveHost,
+    ticks: usize,
+) -> Result<(), anyhow::Error> {
     for _ in 0..ticks {
         let delta = host.tick(world)?;
         world.apply_delta(&delta);
@@ -65,5 +80,9 @@ fn wasm_movement_matches_native_and_is_deterministic() {
     assert_eq!(h[1], h[2], "wasm run 2 vs 3");
 
     // Wasm guest movement == native movement (same math, same bridge target).
-    assert_eq!(h[0], native.hash(), "wasm must match native movement byte-for-byte");
+    assert_eq!(
+        h[0],
+        native.hash(),
+        "wasm must match native movement byte-for-byte"
+    );
 }

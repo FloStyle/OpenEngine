@@ -252,9 +252,18 @@ mod movement_tests {
 
     fn world(count: usize) -> (Vec<Position>, Vec<Velocity>) {
         let pos: Vec<Position> = (0..count)
-            .map(|i| Position { x: I16F16::from_num(((i % 10) as i32) * 50), y: I16F16::from_num(((i / 10) as i32) * 50) })
+            .map(|i| Position {
+                x: I16F16::from_num(((i % 10) as i32) * 50),
+                y: I16F16::from_num(((i / 10) as i32) * 50),
+            })
             .collect();
-        let vel = vec![Velocity { x: I16F16::from_num(5), y: I16F16::from_num(5) }; count];
+        let vel = vec![
+            Velocity {
+                x: I16F16::from_num(5),
+                y: I16F16::from_num(5)
+            };
+            count
+        ];
         (pos, vel)
     }
 
@@ -271,8 +280,14 @@ mod movement_tests {
 
     #[test]
     fn bounce_pins_at_wall() {
-        let pos = vec![Position { x: I16F16::from_num(498), y: I16F16::from_num(0) }];
-        let vel = vec![Velocity { x: I16F16::from_num(10), y: I16F16::from_num(0) }];
+        let pos = vec![Position {
+            x: I16F16::from_num(498),
+            y: I16F16::from_num(0),
+        }];
+        let vel = vec![Velocity {
+            x: I16F16::from_num(10),
+            y: I16F16::from_num(0),
+        }];
         let d = movement_system(&pos, &vel).unwrap();
         // payload is one packed Position; read x (first 4 bytes) back.
         let px = i32::from_le_bytes(d.writes[0].payload[0..4].try_into().unwrap());

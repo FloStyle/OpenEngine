@@ -42,13 +42,17 @@ impl ArchetypeStorage {
 
     /// Immutable typed view of a column, if present.
     pub fn get_column<T: Pod>(&self, component_id: u32) -> Option<&[T]> {
-        self.columns.get(&component_id).map(|data| bytemuck::cast_slice(data))
+        self.columns
+            .get(&component_id)
+            .map(|data| bytemuck::cast_slice(data))
     }
 
     /// Mutable typed view of a column. Reserved for host ECS plumbing (spawn,
     /// apply_delta), never for gameplay systems.
     pub fn get_column_mut<T: Pod>(&mut self, component_id: u32) -> Option<&mut [T]> {
-        self.columns.get_mut(&component_id).map(|data| bytemuck::cast_slice_mut(data))
+        self.columns
+            .get_mut(&component_id)
+            .map(|data| bytemuck::cast_slice_mut(data))
     }
 
     /// Reserve a new row slot, growing columns when full. Returns the row index.
@@ -90,8 +94,10 @@ mod tests {
         let mut i = 0usize;
         while i < 200 {
             let idx = s.allocate();
-            s.get_column_mut::<Position>(POSITION).unwrap()[idx] =
-                Position { x: openengine_math::I16F16::from_num(i as i32), y: openengine_math::I16F16::from_num(0) };
+            s.get_column_mut::<Position>(POSITION).unwrap()[idx] = Position {
+                x: openengine_math::I16F16::from_num(i as i32),
+                y: openengine_math::I16F16::from_num(0),
+            };
             i += 1;
         }
         assert_eq!(s.entity_count(), 200);

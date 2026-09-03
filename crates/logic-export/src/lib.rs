@@ -130,7 +130,8 @@ pub unsafe extern "C" fn openengine_move_tick(
     out_cap: u32,
 ) -> u32 {
     // SAFETY: caller guarantees the input region is readable for input_len.
-    let input_bytes: &[u8] = unsafe { core::slice::from_raw_parts(input_ptr as *const u8, input_len as usize) };
+    let input_bytes: &[u8] =
+        unsafe { core::slice::from_raw_parts(input_ptr as *const u8, input_len as usize) };
 
     // Layout: [postcard Vec<ColumnDescriptor>][column arena].
     let (columns, arena) = match postcard::take_from_bytes::<Vec<ColumnDescriptor>>(input_bytes) {
@@ -169,7 +170,10 @@ fn read_column<T: bytemuck::Pod>(
     arena: &[u8],
     component_id: u32,
 ) -> Vec<T> {
-    let column = match descriptors.iter().find(|c| c.component_id.0 == component_id) {
+    let column = match descriptors
+        .iter()
+        .find(|c| c.component_id.0 == component_id)
+    {
         Some(c) => c,
         None => return Vec::new(),
     };
