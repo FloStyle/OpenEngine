@@ -21,7 +21,7 @@ fn main() -> ExitCode {
         Some(s) => s,
         None => {
             eprintln!(
-                "usage: openengine-runner --scene <scene.json> [--wasm <logic.wasm>] [--frames N] [--forward N]"
+                "usage: openengine-runner --scene <scene.json> [--wasm <logic.wasm>] [--frames N] [--forward N | --script events.json]"
             );
             return ExitCode::from(2);
         }
@@ -34,7 +34,19 @@ fn main() -> ExitCode {
         .and_then(|f| f.parse().ok())
         .unwrap_or(0);
 
-    let result = if forward > 0 {
+    let result = if let Some(script_path) = arg(&args, "--script") {
+        let events: Vec<openengine_harness::runner::FrameInput> = match std::fs::read(&script_path)
+            .map_err(|e| e.to_string())
+            .and_then(|b| serde_json::from_slice(&b).map_err(|e| e.to_string()))
+        {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("--script parse error: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        openengine_harness::runner::run_script(&scene, wasm.as_deref(), frames, &events)
+    } else if forward > 0 {
         openengine_harness::runner::run_forward(&scene, wasm.as_deref(), frames, forward)
     } else {
         openengine_harness::runner::run(&scene, wasm.as_deref(), frames)

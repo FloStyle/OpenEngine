@@ -107,3 +107,48 @@ fn editor_saved_scene_file_is_loadable_by_runner() {
     assert_eq!(r.entity_count, 3);
     let _ = std::fs::remove_file(&path);
 }
+
+#[test]
+fn scripted_input_replay_is_deterministic_and_moves_both_axes() {
+    if !std::path::Path::new(WASM_ASSET).exists() {
+        eprintln!("SKIP: {WASM_ASSET} absent");
+        return;
+    }
+    use openengine_harness::runner::FrameInput;
+    let script = vec![
+        FrameInput {
+            tick: 0,
+            forward: 1,
+            ..Default::default()
+        }, // walk -Z (0..=149)
+        FrameInput {
+            tick: 150,
+            forward: 0,
+            right: 1,
+            ..Default::default()
+        }, // walk +X
+    ];
+    let play = || {
+        let r = runner::run_script(DEMO_SCENE, Some(WASM_ASSET), 300, &script).unwrap();
+        (
+            r.entities[0].transform[2],
+            r.entities[0].transform[0],
+            r.hash,
+        )
+    };
+    let (z, x, h1) = play();
+    assert!(
+        z < -200.0,
+        "forward phase must move the player along -Z, got z={z}"
+    );
+    assert!(
+        x > 100.0,
+        "right phase must move the player along +X, got x={x}"
+    );
+    let (z2, x2, h2) = play();
+    assert_eq!(
+        (z, x, h1),
+        (z2, x2, h2),
+        "identical scripts must replay identically"
+    );
+}

@@ -65,6 +65,64 @@ pub fn run(scene_path: &str, wasm: Option<&str>, frames: u64) -> Result<RunRepor
     run_with(scene_path, wasm, frames, |_| InputState3D::none())
 }
 
+/// One authored input event at `tick`: the held key state from that frame on
+/// until the next event. Fields default to 0 (key released).
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct FrameInput {
+    /// Simulation frame this event applies from.
+    pub tick: u64,
+    pub forward: u8,
+    pub backward: u8,
+    pub left: u8,
+    pub right: u8,
+    pub jump: u8,
+}
+
+fn to_input(f: &FrameInput) -> InputState3D {
+    InputState3D {
+        forward: f.forward,
+        backward: f.backward,
+        left: f.left,
+        right: f.right,
+        jump: f.jump,
+        ..InputState3D::none()
+    }
+}
+
+/// Deterministically replay an authored input script (a sorted list of
+/// [`FrameInput`] events; the held state persists until the next event).
+/// Two identical scripts ⇒ bit-identical result — the basis for replay/testing
+/// a game's logic changes.
+pub fn run_script(
+    scene_path: &str,
+    wasm: Option<&str>,
+    frames: u64,
+    events: &[FrameInput],
+) -> Result<RunReport, String> {
+    let bytes = std::fs::read(scene_path).map_err(|e| format!("read scene {scene_path}: {e}"))?;
+    let scene: SceneFile =
+        serde_json::from_slice(&bytes).map_err(|e| format!("bad scene json: {e}"))?;
+    let mut state = HarnessState::new();
+    state.import_scene(&scene)?;
+    if let Some(wasm_path) = wasm {
+        state.load_wasm(wasm_path)?;
+    }
+    let mut sorted: Vec<&FrameInput> = events.iter().collect();
+    sorted.sort_by_key(|e| e.tick);
+    let mut ei = 0usize;
+    let mut cur = InputState3D::none();
+    for i in 0..frames {
+        while ei < sorted.len() && sorted[ei].tick <= i {
+            cur = to_input(sorted[ei]);
+            ei += 1;
+        }
+        state.set_input(cur);
+        state.tick_n(1)?;
+    }
+    Ok(report_from(&state))
+}
+
 /// Run holding "forward" for the first `forward_ticks` frames — a scripted,
 /// deterministic "walk forward" demo so a packaged game is actually playable.
 pub fn run_forward(
