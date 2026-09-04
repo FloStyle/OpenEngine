@@ -429,6 +429,91 @@ impl EditorApp {
         self.state.edit_world.set_transform(i, nt);
     }
 
+    /// Spawn a new default actor into the edit world and select it. Returns its
+    /// index (Unreal "Add Actor", via host ECS plumbing).
+    pub fn spawn_actor(&mut self) -> Option<u32> {
+        let z = openengine_math::I16F16::from_num(0.0);
+        let i = self.state.edit_world.spawn(
+            Position { x: z, y: z },
+            Velocity { x: z, y: z },
+            EcsColor {
+                r: 200,
+                g: 200,
+                b: 210,
+                a: 255,
+            },
+        );
+        self.state
+            .edit_world
+            .set_transform(i, openengine_contracts::Transform::at(z, z, z));
+        self.state
+            .edit_world
+            .set_velocity_3d(i, openengine_contracts::Velocity3D::zero());
+        self.state
+            .edit_world
+            .set_actor(i, openengine_contracts::Actor::npc(1, i as u32));
+        self.selection.selected = vec![i as u32];
+        Some(i as u32)
+    }
+
+    /// Remove an actor from the edit world (rebuild without it; no ECS removal
+    /// API). Clears the selection.
+    pub fn delete_actor(&mut self, index: usize) {
+        let n = self.state.edit_world.entity_count();
+        if index >= n {
+            return;
+        }
+        let t = self
+            .state
+            .edit_world
+            .get_transforms()
+            .map(|s| s.to_vec())
+            .unwrap_or_default();
+        let v = self
+            .state
+            .edit_world
+            .get_velocity_3d()
+            .map(|s| s.to_vec())
+            .unwrap_or_default();
+        let a = self
+            .state
+            .edit_world
+            .get_actors()
+            .map(|s| s.to_vec())
+            .unwrap_or_default();
+        let c = self
+            .state
+            .edit_world
+            .get_colors()
+            .map(|s| s.to_vec())
+            .unwrap_or_default();
+        let mut fresh = World::new();
+        for i in 0..n {
+            if i == index {
+                continue;
+            }
+            let col = c.get(i).copied().unwrap_or(EcsColor {
+                r: 255,
+                g: 255,
+                b: 255,
+                a: 255,
+            });
+            let z = openengine_math::I16F16::from_num(0.0);
+            let new = fresh.spawn(Position { x: z, y: z }, Velocity { x: z, y: z }, col);
+            if let Some(tr) = t.get(i) {
+                fresh.set_transform(new, *tr);
+            }
+            if let Some(ve) = v.get(i) {
+                fresh.set_velocity_3d(new, *ve);
+            }
+            if let Some(ac) = a.get(i) {
+                fresh.set_actor(new, *ac);
+            }
+        }
+        self.state.edit_world = fresh;
+        self.selection.selected.clear();
+    }
+
     /// Render the toolbar + hierarchy + inspector + reserve the central viewport.
     pub fn ui(&mut self, ctx: &egui::Context) {
         // Capture keyboard (WASD + Space) into a compact array.
@@ -448,6 +533,11 @@ impl EditorApp {
             }
             if ctx.input(|i| i.key_pressed(egui::Key::W)) {
                 self.tool = EditorTool::Move;
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::Delete)) {
+                if let Some(&i) = self.selection.selected.first() {
+                    self.delete_actor(i as usize);
+                }
             }
         }
         self.handle_nav(ctx);
@@ -560,12 +650,29 @@ impl EditorApp {
     }
 
     fn hierarchy(&mut self, ctx: &egui::Context) {
-        let entity_count = self.state.active_world().entity_count();
         egui::SidePanel::left("hierarchy")
             .default_width(180.0)
             .show(ctx, |ui| {
-                ui.heading("Hierarchy");
+                ui.horizontal(|ui| {
+                    ui.heading("Hierarchy");
+                    if self.state.can_edit() {
+                        if ui.small_button("+ Add Actor").clicked() {
+                            self.spawn_actor();
+                        }
+                        let has_sel = !self.selection.selected.is_empty();
+                        if ui
+                            .add_enabled(has_sel, egui::Button::new("🗑"))
+                            .on_hover_text("Delete selected")
+                            .clicked()
+                        {
+                            if let Some(&i) = self.selection.selected.first() {
+                                self.delete_actor(i as usize);
+                            }
+                        }
+                    }
+                });
                 ui.separator();
+                let entity_count = self.state.active_world().entity_count();
                 for i in 0..entity_count {
                     let id = i as u32;
                     let name = if i == 0 { "Player" } else { "NPC" };

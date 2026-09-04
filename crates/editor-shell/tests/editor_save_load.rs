@@ -86,3 +86,23 @@ fn editor_load_scene_is_blocked_while_playing() {
         a.scene_notice
     );
 }
+
+#[test]
+fn editor_add_and_delete_actor() {
+    let mut a = EditorApp::new();
+    let n0 = a.state.edit_world.entity_count();
+    let idx = a.spawn_actor().expect("spawn adds an actor");
+    assert_eq!(a.state.edit_world.entity_count(), n0 + 1);
+    assert_eq!(a.selection.selected, vec![idx]);
+
+    a.delete_actor(idx as usize);
+    assert_eq!(
+        a.state.edit_world.entity_count(),
+        n0,
+        "deleting the just-added actor must restore the count"
+    );
+    assert!(
+        a.selection.selected.is_empty(),
+        "delete clears the selection"
+    );
+}
