@@ -20,6 +20,7 @@
 #![deny(missing_docs)]
 
 pub mod components;
+pub mod scene;
 pub mod storage;
 pub mod world;
 

@@ -10,6 +10,7 @@ license.workspace = true
 bytemuck.workspace = true
 openengine-math = { workspace = true }
 openengine-contracts = { workspace = true }
+serde = { workspace = true }
 
 [lints]
 workspace = true
