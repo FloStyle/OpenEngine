@@ -2,7 +2,7 @@
 //! optional wasm guest. All mutation goes through `WorldDelta -> apply_delta`;
 //! the harness is a thin, headless observe/mutate/verify shell over it.
 
-use openengine_contracts::{Actor, Transform, Velocity3D, WorldDelta};
+use openengine_contracts::{Actor, InputState3D, Transform, Velocity3D, WorldDelta};
 use openengine_ecs::{Color, Position, Velocity, World};
 use openengine_math::I16F16 as F;
 
@@ -295,6 +295,14 @@ impl HarnessState {
         self.guest = Some(WasmGuest::load(path).map_err(|e| format!("load wasm: {e}"))?);
         self.wasm_path = Some(path.to_string());
         Ok(())
+    }
+
+    /// Feed pure input data to the guest on the next tick(s). Ignored when no
+    /// guest is loaded (the native integrator is identity).
+    pub fn set_input(&mut self, input: InputState3D) {
+        if let Some(g) = self.guest.as_mut() {
+            g.set_input(input);
+        }
     }
 
     /// Determinism hash of the world (`World::hash()`).

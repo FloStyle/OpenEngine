@@ -36,8 +36,11 @@ cp "$scene" "$out/scene.json"
 cat > "$out/run.sh" <<EOF
 #!/usr/bin/env bash
 # Run the packaged game (headless). Deterministic replay of the scene+logic.
+# FRAMES = how many ticks to simulate; FORWARD = hold the player's forward key
+# for the first N ticks (0 = no input) so the game is scripted-playable.
 cd "\$(dirname "\$0")"
-./openengine-game --scene scene.json --wasm logic.wasm --frames "\${FRAMES:-120}"
+./openengine-game --scene scene.json --wasm logic.wasm \
+  --frames "\${FRAMES:-120}" --forward "\${FORWARD:-0}"
 EOF
 chmod +x "$out/run.sh" "$out/openengine-game"
 

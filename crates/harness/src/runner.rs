@@ -6,6 +6,8 @@
 //! returning a compact report. It is the headless step a cook/package pipeline
 //! runs before shipping, and it needs no GPU/editor.
 
+use openengine_contracts::InputState3D;
+
 use crate::state::{EntityView, HarnessState, SceneFile};
 
 /// Result of a headless play run.
@@ -21,9 +23,27 @@ fn hex_hash(h: u64) -> String {
     format!("{h:016x}")
 }
 
+fn report_from(state: &HarnessState) -> RunReport {
+    let n = state.entity_count();
+    let tick = state.tick();
+    let (entities, _) = state.observe(n);
+    RunReport {
+        entity_count: n,
+        tick,
+        hash: hex_hash(state.hash()),
+        entities,
+    }
+}
+
 /// Load `scene_path` (a `SceneFile` JSON), optionally load `wasm` logic, tick
-/// `frames` times deterministically, and return a compact report.
-pub fn run(scene_path: &str, wasm: Option<&str>, frames: u64) -> Result<RunReport, String> {
+/// `frames` times deterministically, and return a compact report. Pure input is
+/// provided per frame by `input_at(i)` (input as data → the guest).
+pub fn run_with(
+    scene_path: &str,
+    wasm: Option<&str>,
+    frames: u64,
+    input_at: impl Fn(u64) -> InputState3D,
+) -> Result<RunReport, String> {
     let bytes = std::fs::read(scene_path).map_err(|e| format!("read scene {scene_path}: {e}"))?;
     let scene: SceneFile =
         serde_json::from_slice(&bytes).map_err(|e| format!("bad scene json: {e}"))?;
@@ -33,15 +53,35 @@ pub fn run(scene_path: &str, wasm: Option<&str>, frames: u64) -> Result<RunRepor
     if let Some(wasm_path) = wasm {
         state.load_wasm(wasm_path)?;
     }
-    state.tick_n(frames)?;
+    for i in 0..frames {
+        state.set_input(input_at(i));
+        state.tick_n(1)?;
+    }
+    Ok(report_from(&state))
+}
 
-    let n = state.entity_count();
-    let tick = state.tick();
-    let (entities, _) = state.observe(n);
-    Ok(RunReport {
-        entity_count: n,
-        tick,
-        hash: hex_hash(state.hash()),
-        entities,
+/// Run with no input.
+pub fn run(scene_path: &str, wasm: Option<&str>, frames: u64) -> Result<RunReport, String> {
+    run_with(scene_path, wasm, frames, |_| InputState3D::none())
+}
+
+/// Run holding "forward" for the first `forward_ticks` frames — a scripted,
+/// deterministic "walk forward" demo so a packaged game is actually playable.
+pub fn run_forward(
+    scene_path: &str,
+    wasm: Option<&str>,
+    frames: u64,
+    forward_ticks: u64,
+) -> Result<RunReport, String> {
+    let fwd = InputState3D {
+        forward: 1,
+        ..InputState3D::none()
+    };
+    run_with(scene_path, wasm, frames, |i| {
+        if i < forward_ticks {
+            fwd
+        } else {
+            InputState3D::none()
+        }
     })
 }

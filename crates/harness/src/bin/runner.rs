@@ -21,7 +21,7 @@ fn main() -> ExitCode {
         Some(s) => s,
         None => {
             eprintln!(
-                "usage: openengine-runner --scene <scene.json> [--wasm <logic.wasm>] [--frames N]"
+                "usage: openengine-runner --scene <scene.json> [--wasm <logic.wasm>] [--frames N] [--forward N]"
             );
             return ExitCode::from(2);
         }
@@ -30,8 +30,16 @@ fn main() -> ExitCode {
     let frames: u64 = arg(&args, "--frames")
         .and_then(|f| f.parse().ok())
         .unwrap_or(60);
+    let forward: u64 = arg(&args, "--forward")
+        .and_then(|f| f.parse().ok())
+        .unwrap_or(0);
 
-    match openengine_harness::runner::run(&scene, wasm.as_deref(), frames) {
+    let result = if forward > 0 {
+        openengine_harness::runner::run_forward(&scene, wasm.as_deref(), frames, forward)
+    } else {
+        openengine_harness::runner::run(&scene, wasm.as_deref(), frames)
+    };
+    match result {
         Ok(report) => {
             println!(
                 "{}",
