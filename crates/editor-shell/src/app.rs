@@ -456,6 +456,44 @@ impl EditorApp {
         Some(i as u32)
     }
 
+    /// Duplicate the actor at `index` (offset by `+0.5` X so it's separable),
+    /// select the copy, and return it (Unreal Ctrl+D).
+    pub fn duplicate_actor(&mut self, index: usize) -> Option<u32> {
+        let n = self.state.edit_world.entity_count();
+        if index >= n {
+            return None;
+        }
+        let z = openengine_math::I16F16::from_num(0.0);
+        let one = openengine_math::I16F16::from_num(0.5);
+        let color = self
+            .state
+            .edit_world
+            .get_colors()
+            .map(|c| c[index])
+            .unwrap_or(EcsColor {
+                r: 200,
+                g: 200,
+                b: 210,
+                a: 255,
+            });
+        let new =
+            self.state
+                .edit_world
+                .spawn(Position { x: z, y: z }, Velocity { x: z, y: z }, color);
+        if let Some(mut t) = self.state.edit_world.get_transforms().map(|c| c[index]) {
+            t.position[0] += one;
+            self.state.edit_world.set_transform(new, t);
+        }
+        if let Some(v) = self.state.edit_world.get_velocity_3d().map(|c| c[index]) {
+            self.state.edit_world.set_velocity_3d(new, v);
+        }
+        if let Some(a) = self.state.edit_world.get_actors().map(|c| c[index]) {
+            self.state.edit_world.set_actor(new, a);
+        }
+        self.selection.selected = vec![new as u32];
+        Some(new as u32)
+    }
+
     /// Remove an actor from the edit world (rebuild without it; no ECS removal
     /// API). Clears the selection.
     pub fn delete_actor(&mut self, index: usize) {
@@ -537,6 +575,11 @@ impl EditorApp {
             if ctx.input(|i| i.key_pressed(egui::Key::Delete)) {
                 if let Some(&i) = self.selection.selected.first() {
                     self.delete_actor(i as usize);
+                }
+            }
+            if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::D)) {
+                if let Some(&i) = self.selection.selected.first() {
+                    self.duplicate_actor(i as usize);
                 }
             }
         }

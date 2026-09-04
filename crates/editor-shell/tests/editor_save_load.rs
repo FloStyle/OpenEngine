@@ -106,3 +106,21 @@ fn editor_add_and_delete_actor() {
         "delete clears the selection"
     );
 }
+
+#[test]
+fn editor_duplicate_actor() {
+    let mut a = EditorApp::new();
+    let n0 = a.state.edit_world.entity_count();
+    // Pick the first actor and duplicate it.
+    let dup = a.duplicate_actor(0).expect("duplicate returns a new actor");
+    assert_eq!(a.state.edit_world.entity_count(), n0 + 1);
+    assert_eq!(a.selection.selected, vec![dup]);
+    // The copy is offset from the original (separable, not on the exact spot).
+    let orig_x = a.state.edit_world.get_transforms().unwrap()[0].position[0].to_num::<f32>();
+    let dup_x =
+        a.state.edit_world.get_transforms().unwrap()[dup as usize].position[0].to_num::<f32>();
+    assert!(
+        (dup_x - orig_x).abs() > 0.01,
+        "duplicate should be offset from the original, got {dup_x} vs {orig_x}"
+    );
+}
