@@ -21,6 +21,7 @@ use openengine_core::wasm_gameplay_host::WasmGameplayHost;
 use openengine_ecs::{Color as EcsColor, Position, Velocity, World};
 use openengine_editor::camera::EditorCamera;
 use openengine_editor::commands::{ModifyTransformCommand, UndoRedoManager};
+use openengine_editor::grid::{ground_grab_offset, move_actor_on_ground, EditorGrid};
 use openengine_editor::selection::{pick, SelectionModel};
 use openengine_editor::state::{EditorMode, EditorState};
 use openengine_math::I16F16;
@@ -50,6 +51,22 @@ pub struct EditorApp {
     pub scene_path: String,
     /// Last Save/Load scene result, shown in the toolbar.
     pub scene_notice: Option<String>,
+    /// Active transform tool (Unreal-like W = move, Q = select).
+    pub tool: EditorTool,
+    /// True while a Move drag is in progress.
+    pub move_active: bool,
+    /// Grid snap step + whether snapping is on (Move tool).
+    pub grid_step: f32,
+    pub snap: bool,
+    /// (grab XZ offset, entity index) captured when a Move drag begins.
+    pub move_grab: Option<([f32; 2], u32)>,
+}
+
+/// Unreal-like editor transform tools.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditorTool {
+    Select,
+    Move,
 }
 
 /// Loads + holds the guest gameplay module and paces ticks at a fixed 60 Hz.
@@ -169,6 +186,11 @@ impl EditorApp {
             scene_path: std::env::var("OPENENGINE_SCENE_PATH")
                 .unwrap_or_else(|_| "scene.json".into()),
             scene_notice: None,
+            tool: EditorTool::Select,
+            move_active: false,
+            grid_step: 0.5,
+            snap: true,
+            move_grab: None,
         };
         // Default framing so the spawned spheres (x in 0..25) are visible.
         app.camera.focus = glam::Vec3::new(12.5, 0.0, 0.0);
@@ -307,6 +329,106 @@ impl EditorApp {
         }
     }
 
+    /// Move tool drag: click-drag in the viewport translates the selected actor
+    /// across the ground plane, optionally snapped to the grid. Select first
+    /// (Select tool / hierarchy), then switch to Move and drag.
+    fn handle_edit_drag(&mut self, ctx: &egui::Context) {
+        if self.state.mode != EditorMode::Edit {
+            self.move_active = false;
+            self.move_grab = None;
+            return;
+        }
+        if self.tool != EditorTool::Move {
+            return;
+        }
+        let Some(&ent) = self.selection.selected.first() else {
+            return;
+        };
+        let Some(rect) = self.viewport_rect else {
+            return;
+        };
+        let aspect = (rect.width() / rect.height()).max(0.01);
+        let nav =
+            ctx.input(|i| i.modifiers.alt || i.pointer.secondary_down() || i.pointer.middle_down());
+        if nav {
+            self.move_active = false;
+            self.move_grab = None;
+            return;
+        }
+        let pos = ctx.input(|i| {
+            i.pointer
+                .hover_pos()
+                .or(i.pointer.latest_pos())
+                .filter(|p| rect.contains(*p))
+        });
+        let Some(p) = pos else {
+            self.move_active = false;
+            self.move_grab = None;
+            return;
+        };
+        let q = p - rect.min;
+        let nx = (q.x / rect.width()) * 2.0 - 1.0;
+        let ny = 1.0 - (q.y / rect.height()) * 2.0;
+        let grid = EditorGrid {
+            step: if self.snap { self.grid_step } else { 0.0 },
+        };
+
+        let pressed = ctx.input(|i| i.pointer.primary_pressed());
+        let down = ctx.input(|i| i.pointer.primary_down());
+        let Some(cur) = self.edit_xz(ent) else {
+            return;
+        };
+        if pressed && !self.move_active {
+            // Begin drag: capture the grab offset so the actor doesn't jump.
+            let off = ground_grab_offset(&self.camera, nx, ny, aspect, &grid, [cur[0], cur[2]])
+                .unwrap_or([0.0, 0.0]);
+            self.move_grab = Some((off, ent));
+            self.move_active = true;
+        }
+        if self.move_active && down {
+            if let Some((off, _)) = self.move_grab {
+                if let Some(m) = move_actor_on_ground(&self.camera, nx, ny, aspect, &grid, off) {
+                    self.set_edit_xz(ent, m[0], cur[1], m[2]);
+                }
+            }
+        }
+        if !down {
+            self.move_active = false;
+            self.move_grab = None;
+        }
+    }
+
+    /// XZ position of an edit-world entity, else `None`.
+    fn edit_xz(&self, ent: u32) -> Option<[f32; 3]> {
+        let t = self.state.edit_world.get_transforms()?;
+        let i = ent as usize;
+        let p = t.get(i)?.position;
+        Some([p[0].to_num(), p[1].to_num(), p[2].to_num()])
+    }
+
+    /// Move an edit-world entity's position (host plumbing for gizmo drags).
+    fn set_edit_xz(&mut self, ent: u32, x: f32, y: f32, z: f32) {
+        let i = ent as usize;
+        let nt = {
+            let Some(mut nt) = self
+                .state
+                .edit_world
+                .get_transforms()
+                .and_then(|c| c.get(i))
+                .copied()
+            else {
+                return;
+            };
+            nt.position = [
+                openengine_math::I16F16::from_num(x),
+                openengine_math::I16F16::from_num(y),
+                openengine_math::I16F16::from_num(z),
+            ];
+            nt
+        };
+        self.state.edit_world.set_transform(i, nt);
+    }
+
     /// Render the toolbar + hierarchy + inspector + reserve the central viewport.
     pub fn ui(&mut self, ctx: &egui::Context) {
         // Capture keyboard (WASD + Space) into a compact array.
@@ -320,7 +442,16 @@ impl EditorApp {
             )
         });
         self.keys = [up, down, left, right, jump];
+        if self.state.mode == EditorMode::Edit {
+            if ctx.input(|i| i.key_pressed(egui::Key::Q)) {
+                self.tool = EditorTool::Select;
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::W)) {
+                self.tool = EditorTool::Move;
+            }
+        }
         self.handle_nav(ctx);
+        self.handle_edit_drag(ctx);
         self.toolbar(ctx);
         self.hierarchy(ctx);
         self.inspector(ctx);
@@ -338,6 +469,33 @@ impl EditorApp {
             ui.horizontal(|ui| {
                 ui.label(format!("Mode: {:?}", self.state.mode));
                 if self.state.mode == EditorMode::Edit {
+                    // Unreal-like transform tools (Q=Select, W=Move).
+                    let sel = self.tool == EditorTool::Select;
+                    let mov = self.tool == EditorTool::Move;
+                    if ui
+                        .selectable_label(sel, "Q ▸ Select")
+                        .on_hover_text("Select (Q)")
+                        .clicked()
+                    {
+                        self.tool = EditorTool::Select;
+                    }
+                    if ui
+                        .selectable_label(mov, "W ▶ Move")
+                        .on_hover_text("Move on grid (W) — drag the selected actor")
+                        .clicked()
+                    {
+                        self.tool = EditorTool::Move;
+                    }
+                    if self.tool == EditorTool::Move {
+                        ui.checkbox(&mut self.snap, "Snap");
+                        ui.add(
+                            egui::DragValue::new(&mut self.grid_step)
+                                .speed(0.1)
+                                .range(0.0..=10.0)
+                                .prefix("grid "),
+                        );
+                    }
+                    ui.separator();
                     if ui.button("▶ Play").clicked() {
                         self.state.play();
                     }
