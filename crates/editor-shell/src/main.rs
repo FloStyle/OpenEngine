@@ -113,10 +113,12 @@ struct Shell {
     egui_state: Option<egui_winit::State>,
     egui_renderer: Option<egui_wgpu::Renderer>,
     scene: Option<SceneRenderer>,
+    /// Optional scene to auto-load and immediately play (`--play scene.json`).
+    launch_play: Option<String>,
 }
 
 impl Shell {
-    fn new() -> Self {
+    fn new(launch_play: Option<String>) -> Self {
         Shell {
             window: None,
             gpu: None,
@@ -124,6 +126,7 @@ impl Shell {
             egui_state: None,
             egui_renderer: None,
             scene: None,
+            launch_play,
         }
     }
 }
@@ -148,6 +151,13 @@ impl ApplicationHandler for Shell {
         let egui_ctx = egui::Context::default();
         let mut app = EditorApp::new();
         app.egui_ctx = egui_ctx.clone();
+        // `--play <scene>`: auto-load the scene and start playing it.
+        if let Some(scene) = self.launch_play.take() {
+            app.scene_path = scene;
+            app.load_scene();
+            app.state.play();
+            app.scene_notice = Some("playing (stop to edit)".into());
+        }
         let egui_state = egui_winit::State::new(
             egui_ctx,
             ViewportId::ROOT,
@@ -289,9 +299,20 @@ impl Shell {
 }
 
 fn main() -> anyhow::Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    // `--play <scene.json>` auto-loads and plays a saved scene.
+    let mut play = None;
+    let mut i = 1;
+    while i < args.len() {
+        if args[i] == "--play" {
+            play = args.get(i + 1).cloned();
+            i += 1;
+        }
+        i += 1;
+    }
     let event_loop = EventLoop::new().context("event loop")?;
     event_loop.set_control_flow(ControlFlow::Poll);
-    let mut shell = Shell::new();
+    let mut shell = Shell::new(play);
     event_loop
         .run_app(&mut shell)
         .map_err(anyhow::Error::from)?;
