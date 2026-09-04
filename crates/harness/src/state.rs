@@ -38,7 +38,9 @@ pub use openengine_ecs::scene::{SceneContent, SceneEntity, SCENE_VERSION};
 pub struct SceneFile {
     /// Shared content version.
     pub version: u32,
-    /// Resume tick (sim frame) — 0 for freshly authored scenes.
+    /// Resume tick (sim frame) — 0 for freshly authored scenes. Defaulted so a
+    /// canonical `SceneContent` file (which has no tick) also parses here.
+    #[serde(default)]
     pub tick: u64,
     /// Shared authored entities (ecs codec).
     pub entities: Vec<SceneEntity>,

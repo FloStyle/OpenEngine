@@ -89,3 +89,21 @@ fn input_as_pure_data_moves_player_and_is_deterministic() {
         "same input sequence must reproduce the same position"
     );
 }
+
+#[test]
+fn editor_saved_scene_file_is_loadable_by_runner() {
+    // The editor writes the canonical SceneContent (version + entities, no tick).
+    let bytes = std::fs::read(DEMO_SCENE).unwrap();
+    let content: openengine_ecs::scene::SceneContent = serde_json::from_slice(&bytes).unwrap();
+    let path = std::env::temp_dir().join(format!(
+        "openengine_editor_saved_{}.json",
+        std::process::id()
+    ));
+    let p = path.to_str().unwrap().to_string();
+    std::fs::write(&p, serde_json::to_vec(&content).unwrap()).unwrap();
+
+    // The runner must load an editor-saved (content-only) file.
+    let r = runner::run(&p, None, 10).expect("runner must load an editor-saved scene");
+    assert_eq!(r.entity_count, 3);
+    let _ = std::fs::remove_file(&path);
+}

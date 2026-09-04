@@ -46,6 +46,10 @@ pub struct EditorApp {
     pub follow_active: bool,
     /// Lazy wasm gameplay backend (loaded once on the first Play).
     pub backend: PlayBackend,
+    /// Scene file path for Save/Load scene (default from OPENENGINE_SCENE_PATH).
+    pub scene_path: String,
+    /// Last Save/Load scene result, shown in the toolbar.
+    pub scene_notice: Option<String>,
 }
 
 /// Loads + holds the guest gameplay module and paces ticks at a fixed 60 Hz.
@@ -162,6 +166,9 @@ impl EditorApp {
             player_vy: 0.0,
             follow_active: false,
             backend: PlayBackend::default(),
+            scene_path: std::env::var("OPENENGINE_SCENE_PATH")
+                .unwrap_or_else(|_| "scene.json".into()),
+            scene_notice: None,
         };
         // Default framing so the spawned spheres (x in 0..25) are visible.
         app.camera.focus = glam::Vec3::new(12.5, 0.0, 0.0);
@@ -372,6 +379,24 @@ impl EditorApp {
                 } else {
                     "Playing: edits locked"
                 });
+                // Scene persistence (File → Save / Load) using the shared codec.
+                ui.separator();
+                ui.label("Scene");
+                if ui.button("💾 Save").clicked() {
+                    self.save_scene();
+                }
+                let load = ui.add_enabled(can_edit, egui::Button::new("📂 Load"));
+                if load.clicked() {
+                    self.load_scene();
+                }
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.scene_path)
+                        .desired_width(150.0)
+                        .hint_text("scene.json"),
+                );
+                if let Some(msg) = self.scene_notice.clone() {
+                    ui.label(egui::RichText::new(msg).weak());
+                }
             });
         });
     }
@@ -478,6 +503,54 @@ impl EditorApp {
                     self.undo.execute(&mut self.state.edit_world, cmd);
                 }
             });
+    }
+
+    /// Serialize the current EDIT scene to `self.scene_path` (ecs scene codec —
+    /// the same format the runner/package pipeline consumes).
+    pub fn save_scene(&mut self) {
+        let content = openengine_ecs::scene::content_from_world(&self.state.edit_world);
+        self.scene_notice = match serde_json::to_string_pretty(&content)
+            .map_err(|e| e.to_string())
+            .and_then(|s| {
+                std::fs::write(&self.scene_path, s)
+                    .map(|_| {
+                        format!(
+                            "saved {} entities -> {}",
+                            content.entities.len(),
+                            self.scene_path
+                        )
+                    })
+                    .map_err(|e| e.to_string())
+            }) {
+            Ok(m) => Some(m),
+            Err(e) => Some(format!("save failed: {e}")),
+        };
+    }
+
+    /// Load a scene file into the EDIT world (only when not playing).
+    pub fn load_scene(&mut self) {
+        if !self.state.can_edit() {
+            self.scene_notice = Some("stop Play before loading a scene".into());
+            return;
+        }
+        self.scene_notice = match std::fs::read(&self.scene_path)
+            .map_err(|e| format!("read {}: {e}", self.scene_path))
+            .and_then(|b| {
+                let content: openengine_ecs::scene::SceneContent =
+                    serde_json::from_slice(&b).map_err(|e| format!("bad scene json: {e}"))?;
+                openengine_ecs::scene::world_from_content(&content)
+            }) {
+            Ok(world) => {
+                self.state.edit_world = world;
+                self.selection.selected.clear();
+                Some(format!(
+                    "loaded {} -> {} entities",
+                    self.scene_path,
+                    self.state.edit_world.entity_count()
+                ))
+            }
+            Err(e) => Some(format!("load failed: {e}")),
+        };
     }
 
     /// Pick an entity under the mouse within the viewport rect.
