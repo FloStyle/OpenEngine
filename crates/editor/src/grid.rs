@@ -61,6 +61,35 @@ pub fn snap_pos(grid: &EditorGrid, p: [f32; 3]) -> [f32; 3] {
     ]
 }
 
+/// While dragging an actor across the ground (gizmo Move), keep the exact
+/// grabbed point under the cursor so the actor does not jump to its center.
+/// `grab_offset` is the snapped ground point at grab minus the actor's XZ.
+pub fn move_actor_on_ground(
+    camera: &EditorCamera,
+    ndc_x: f32,
+    ndc_y: f32,
+    aspect: f32,
+    grid: &EditorGrid,
+    grab_offset: [f32; 2],
+) -> Option<[f32; 3]> {
+    let target = ground_point_snapped(camera, ndc_x, ndc_y, aspect, grid)?;
+    Some([target[0] - grab_offset[0], 0.0, target[2] - grab_offset[1]])
+}
+
+/// World-space snap offset between a pointer's ground point and an actor's XZ
+/// at the moment the drag begins.
+pub fn ground_grab_offset(
+    camera: &EditorCamera,
+    ndc_x: f32,
+    ndc_y: f32,
+    aspect: f32,
+    grid: &EditorGrid,
+    actor_xz: [f32; 2],
+) -> Option<[f32; 2]> {
+    let p = ground_point_snapped(camera, ndc_x, ndc_y, aspect, grid)?;
+    Some([p[0] - actor_xz[0], p[2] - actor_xz[1]])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,7 +138,31 @@ mod tests {
     }
 
     #[test]
-    fn off_center_pixels_map_to_symmetric_ground_points() {
+    fn move_actor_keeps_grabbed_point_under_cursor() {
+        let cam = EditorCamera {
+            focus: Vec3::ZERO,
+            distance: 20.0,
+            yaw: 0.0,
+            pitch: 0.4,
+            fov: 45f32.to_radians(),
+        };
+        let g = EditorGrid { step: 1.0 };
+        // Actor currently at XZ (2,0). Grab at ndc (0.0,0.0) ~ the focus origin.
+        let at = ground_point_snapped(&cam, 0.0, 0.0, 1.0, &g).unwrap();
+        let actor_xz = [2.0f32, 0.0];
+        let off = ground_grab_offset(&cam, 0.0, 0.0, 1.0, &g, actor_xz).unwrap();
+        // If we never move the cursor, moving must return the SAME position.
+        let p = move_actor_on_ground(&cam, 0.0, 0.0, 1.0, &g, off).unwrap();
+        let _ = at;
+        assert_eq!(
+            (p[0], p[2]),
+            (actor_xz[0], actor_xz[1]),
+            "no motion keeps the actor put"
+        );
+    }
+
+    #[test]
+    fn move_actor_translates_with_the_drag() {
         let cam = EditorCamera {
             focus: Vec3::ZERO,
             distance: 20.0,
@@ -118,12 +171,14 @@ mod tests {
             fov: 45f32.to_radians(),
         };
         let g = EditorGrid { step: 0.5 };
-        let right = ground_point_snapped(&cam, 0.9, 0.0, 1.0, &g).unwrap();
-        let left = ground_point_snapped(&cam, -0.9, 0.0, 1.0, &g).unwrap();
-        // Two symmetric pixels must not collapse onto the same snapped point.
+        let actor_xz = [0.0f32, 0.0];
+        let off = ground_grab_offset(&cam, 0.0, 0.0, 1.0, &g, actor_xz).unwrap();
+        // Different pointer positions must map to different actor positions.
+        let a = move_actor_on_ground(&cam, 0.4, 0.0, 1.0, &g, off).unwrap();
+        let b = move_actor_on_ground(&cam, 0.9, 0.0, 1.0, &g, off).unwrap();
         assert!(
-            right != left,
-            "symmetric off-center pixels must differ on the ground, got {right:?} vs {left:?}"
+            a != b,
+            "dragging farther must move the actor, got {a:?} then {b:?}"
         );
     }
 }
