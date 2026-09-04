@@ -31,10 +31,12 @@ green) and, for interactive parts, validated on the user's display:
 
 | area | status |
 |------|--------|
-| `feat/wasm-play` branch — wire real wasm gameplay into editor Play | implementation done, tests green; pending user display validation + merge |
+| Headless pipeline (start / develop+test / edit-save / player-run / package) | ✅ merged on `main` (see Completed) |
+| Windowed player / render the packaged game | todo (needs your display) |
+| Wire editor-shell to open/edit a real saved scene file (not the hardcoded demo) | todo (windowed) |
 | Hot-reload of `logic.wasm` (spec 10) | todo |
 | Swappable 2nd demo logic module (prove engine is logic-agnostic) | todo |
-| Editor: gizmo translate / drag-select / spawn / scene save-load (spec 16) | todo |
+| Editor: gizmo translate / drag-select (spec 09/31) | todo |
 | Asset pipeline (Phase 5): textures/meshes/cache | todo |
 | STATE.md / ROADMAP kept current | ongoing |
 
@@ -45,7 +47,17 @@ green) and, for interactive parts, validated on the user's display:
 - Phase 6 core + shell: `crates/editor` headless core, `crates/editor-shell`
   interactive editor merged into `main` (`e4ebdbc` → `c9bc0c2`).
 - Wasm gameplay bridge + determinism tests (guest == native; 3× deterministic).
-- Merged into `main`: editor-shell + lit scene; feature branch removed.
+- **Harness core** (`crates/harness`, in `main`): headless JSON-over-HTTP live
+  surface — `/observe /spawn /despawn /set /tick /hash /load_wasm /prove
+  /transaction /save /load`.
+- **Full headless game pipeline (in `main`)**:
+  - develop+test: `/prove` (determinism PASS/FAIL), `/transaction` (atomic, rollback);
+  - edit scene: versioned `/save` `/load` (bit-for-bit world round-trip);
+  - player: `openengine-runner` runs a scene + `logic.wasm` headless;
+  - package: `scripts/package.sh` → runnable `dist/<game>/`;
+  - proof: `full_pipeline` test authors `examples/demo-chase.json` → runs it →
+    the guest chaser moves toward the player → two runs bit-identical.
+
 
 ## Important Notes
 

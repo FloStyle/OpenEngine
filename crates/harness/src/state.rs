@@ -20,7 +20,7 @@ pub struct HarnessState {
 }
 
 /// Compact snapshot of one entity for `/observe`.
-#[derive(serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct EntityView {
     pub index: u32,
     pub transform: [f32; 3],
