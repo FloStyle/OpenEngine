@@ -21,6 +21,8 @@ openengine-ecs = { path = "../ecs" }
 openengine-core = { path = "../core" }
 openengine-contracts = { workspace = true }
 openengine-math = { workspace = true }
+# Phase 3: the shell hosts real editor tools behind the plugin boundary.
+openengine-plugin-host = { path = "../plugin-host" }
 bytemuck.workspace = true
 glam.workspace = true
 pollster.workspace = true

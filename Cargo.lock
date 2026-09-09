@@ -1520,6 +1520,7 @@ dependencies = [
  "openengine-ecs",
  "openengine-editor",
  "openengine-math",
+ "openengine-plugin-host",
  "pollster",
  "serde",
  "serde_json",
@@ -1535,6 +1536,7 @@ dependencies = [
  "bytemuck",
  "openengine-contracts",
  "openengine-ecs",
+ "openengine-logic-sandbox",
  "openengine-math",
  "postcard",
  "serde",
@@ -1574,6 +1576,11 @@ dependencies = [
 [[package]]
 name = "openengine-plugin-host"
 version = "0.1.0"
+dependencies = [
+ "openengine-contracts",
+ "openengine-editor",
+ "openengine-math",
+]
 
 [[package]]
 name = "orbclient"

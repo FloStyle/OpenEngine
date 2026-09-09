@@ -9,7 +9,12 @@ license.workspace = true
 [lints]
 workspace = true
 
-[dev-dependencies]
+[dependencies]
+# The in-crate editor tool plugins (move_tool) reuse the headless editor grid
+# math, so the boundary crate links the editor core. The editor pulls no
+# egui/wgpu, keeping this crate headless.
 openengine-editor = { path = "../editor" }
+
+[dev-dependencies]
 openengine-contracts = { workspace = true }
 openengine-math = { workspace = true }

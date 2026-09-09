@@ -10,6 +10,13 @@
 //! plain typed arguments at `init`/`update` (the registry is the host's job, per
 //! ADR-0005), keeping plugin code concrete and predictable.
 
+/// In-crate editor tool plugins (real tools behind the boundary, e.g. the Move
+/// gizmo). Hosts may construct and register these.
+pub mod plugins {
+    /// The real editor Move tool as a plugin (grid ground-drag math + lifecycle).
+    pub mod move_tool;
+}
+
 /// Shared per-frame context a plugin may read (host-owned, typed).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FrameCtx {

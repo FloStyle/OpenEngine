@@ -1,11 +1,14 @@
 //! OpenEngine Editor Shell binary (Domain A) — winit 0.30 + wgpu 25 + egui 0.32.
 
+use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 
 use anyhow::Context;
 use egui::ViewportId;
 use openengine_editor_shell::app::EditorApp;
 use openengine_editor_shell::renderer::SceneRenderer;
+use openengine_plugin_host::plugins::move_tool::MoveToolPlugin;
+use openengine_plugin_host::{FrameCtx, PluginHost};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
@@ -115,10 +118,21 @@ struct Shell {
     scene: Option<SceneRenderer>,
     /// Optional scene to auto-load and immediately play (`--play scene.json`).
     launch_play: Option<String>,
+    /// Phase 3 plugin host: owns the real editor tools (Move) as plugins.
+    plugins: PluginHost,
 }
 
 impl Shell {
     fn new(launch_play: Option<String>) -> Self {
+        // Register the real Move tool behind the plugin boundary at startup.
+        let mut plugins = PluginHost::new();
+        let f = FrameCtx { frame: 0, dt: 0.0 };
+        let move_tool = MoveToolPlugin::new(0.5, [0.0, 0.0], Arc::new(AtomicU32::new(0)));
+        // A tool failing to register is a non-fatal boundary error: log it and
+        // keep running (tool just absent). Never crash the editor shell.
+        if let Err(e) = plugins.add(Box::new(move_tool), &f) {
+            eprintln!("move-tool plugin: {e}");
+        }
         Shell {
             window: None,
             gpu: None,
@@ -127,6 +141,7 @@ impl Shell {
             egui_renderer: None,
             scene: None,
             launch_play,
+            plugins,
         }
     }
 }
@@ -227,6 +242,18 @@ impl Shell {
         let full_output = ctx.run(raw_input, |ctx| app.ui(ctx));
         state.handle_platform_output(window, full_output.platform_output);
         app.step_simulation();
+
+        // Phase 3: step the hosted editor tools once per shell frame so the
+        // registered Move plugin really runs (its updates are synthetic drags —
+        // the live UI rewiring is deferred to visual validation). A plugin error
+        // is non-fatal here; log and continue.
+        let plugin_frame = FrameCtx {
+            frame: app.frame,
+            dt: 1.0 / 60.0,
+        };
+        if let Err(e) = self.plugins.update_all(&plugin_frame) {
+            eprintln!("plugin update: {e}");
+        }
 
         // 2. Render the 3D scene (cubes) first, then egui on top (Load).
         let frame = match gpu.surface.get_current_texture() {
