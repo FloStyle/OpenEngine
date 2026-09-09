@@ -50,6 +50,19 @@ bash scripts/harness.sh hash
 | POST | `/restore` | `{"snapshot":{…}}` → restore a snapshot bit-for-bit |
 | POST | `/verify` | full structured gate → `{status, build, tests, purity, determinism, errors}` |
 | GET | `/reload_logic` | see above (listed under POST) |
+| GET | `/schema` | spec-21 component registry → `{components:[{id,name,size,fields}], component_ids}` |
+
+## Component introspection
+
+Before proposing edits, ask the engine what it can read/write:
+
+```bash
+bash scripts/harness.sh schema   # → components + name→id index
+```
+
+`/schema` lists every editable component with its spec-21 id, byte size and
+field names (Position 0, Velocity 1, Transform 2, Color 72, Velocity3D 80,
+Actor 81) so you can target `/set` without reading source.
 
 ## Determinism / prove
 
