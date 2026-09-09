@@ -17,6 +17,7 @@ pub mod gizmo;
 pub mod grid;
 pub mod selection;
 pub mod state;
+pub mod transform_edit;
 pub mod translate;
 
 pub use commands::{Command, ModifyTransformCommand, UndoRedoManager};
@@ -24,4 +25,5 @@ pub use gizmo::{axis_coord, camera_forward, screen_plane_point};
 pub use grid::{ground_point_snapped, snap_pos, EditorGrid};
 pub use selection::{pick, SelectionModel};
 pub use state::{EditorMode, EditorState};
+pub use transform_edit::{drag_to_scale, drag_to_yaw, rotate_yaw, scale_uniform};
 pub use translate::ray_ground_plane;
