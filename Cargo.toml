@@ -38,6 +38,9 @@ members = [
     "crates/ai",
     # Domain A — plugin boundary (Plugin trait + PluginHost lifecycle, Phase 3).
     "crates/plugin-host",
+    # Domain A — headless offscreen capture (wgpu). Optional: wired into the
+    # harness only via its `capture` feature so headless CI stays GPU-free.
+    "crates/capture",
 ]
 # Deliberately NO wildcard member globs: onboarding a crate is an intentional
 # act that requires its Cargo.toml + lib.rs + lint review to exist first.
@@ -81,6 +84,8 @@ anyhow   = { version = "1" }
 reqwest  = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 # base64 for image parts in multimodal chat turns (CLI image + /see).
 base64   = { version = "0.22", default-features = false, features = ["std"] }
+# PNG encode for headless /frame capture (crates/capture).
+png      = { version = "0.18", default-features = false }
 
 # ---- Domain B : Deterministic math + zero-copy wire format ---------------
 # fixed is the ONLY sanctioned fractional representation in game logic.

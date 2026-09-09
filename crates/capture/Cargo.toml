@@ -1,0 +1,21 @@
+[package]
+name = "openengine-capture"
+description = "Domain A: headless offscreen render + PNG encode of an ECS World. wgpu-based; no window, no egui. Optional dependency of the harness (feature 'capture')."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+wgpu = { workspace = true }
+bytemuck = { workspace = true }
+glam = { workspace = true }
+pollster = { workspace = true }
+png = { workspace = true }
+openengine-ecs = { path = "../ecs" }
+openengine-editor = { path = "../editor" }
+openengine-contracts = { workspace = true }
+openengine-math = { workspace = true }
+
+[lints]
+workspace = true

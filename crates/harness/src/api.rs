@@ -496,6 +496,61 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
                 Err(e) => err(500, e),
             }
         }
+        // ── AI status: config read only, zero network. ──
+        ("GET", "/ai/status") | ("POST", "/ai/status") => ok(ai_status()),
+        // ── Vision: offscreen screenshot of the live world (capture feature). ──
+        ("GET", "/frame") | ("GET", "/screenshot") => crate::api::frame(state, path),
         _ => err(404, format!("no route: {method} {path}")),
     }
+}
+
+/// Config-only AI status (no network, no GPU). Mirrors the resolved model
+/// config the harness would use for `/ask`-style features.
+fn ai_status() -> Value {
+    use openengine_ai::config::{resolve_config, vision_supported};
+    match resolve_config(None) {
+        Ok((cfg, src)) => json!({
+            "configured": true,
+            "source": src.to_string(),
+            "provider": match &cfg.provider {
+                openengine_ai::ProviderConfig::ApiKey { .. } => "deepseek",
+                openengine_ai::ProviderConfig::Local { .. } => "llama.cpp",
+            },
+            "model": cfg.model,
+            "endpoint": cfg.describe(),
+            "vision": vision_supported(&cfg),
+        }),
+        Err(_) => {
+            json!({ "configured": false, "error": "no AI config. set OPENENGINE_AI_CONFIG or ./config/ai.json" })
+        }
+    }
+}
+
+/// `/frame` offscreen capture. Requires the `capture` feature (wgpu) + a GPU
+/// adapter; returns a typed 503 otherwise, never a crash.
+#[cfg(feature = "capture")]
+fn frame(state: &HarnessState, _path: &str) -> (u16, Value) {
+    // Parse optional w/h from the query; dispatch already passed path w/o query,
+    // so accept compact sizes only (the CLI /see requests /frame directly).
+    let w = 640u32;
+    let h = 480u32;
+    let camera = openengine_editor::camera::EditorCamera::default();
+    match openengine_capture::capture_world_png(state.world(), &camera, w, h) {
+        Ok(png) => {
+            use base64::Engine as _;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+            ok(json!({ "png_base64": b64, "mime": "image/png", "width": w, "height": h }))
+        }
+        Err(e) => err(503, format!("no-adapter: {e}")),
+    }
+}
+
+/// `/frame` stub when the crate is built without the capture feature (headless
+/// CI). Typed, never a crash.
+#[cfg(not(feature = "capture"))]
+fn frame(_state: &HarnessState, _path: &str) -> (u16, Value) {
+    err(
+        503,
+        "no-adapter: harness built without the 'capture' feature (no wgpu). Rebuild with --features capture on a GPU machine.",
+    )
 }

@@ -95,6 +95,11 @@ impl HarnessState {
     pub fn entity_count(&self) -> usize {
         self.world.entity_count()
     }
+    /// Read access to the live world (for headless capture under the `capture`
+    /// feature). Read-only — all mutation goes through the single channel.
+    pub fn world(&self) -> &World {
+        &self.world
+    }
     pub fn tick(&self) -> u64 {
         self.tick
     }

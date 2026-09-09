@@ -19,6 +19,8 @@ openengine-logic-sandbox = { path = "../logic-sandbox" }
 openengine-ecs = { path = "../ecs" }
 openengine-contracts = { workspace = true }
 openengine-math = { workspace = true }
+openengine-editor = { path = "../editor" }
+openengine-ai = { path = "../ai" }
 bytemuck.workspace = true
 postcard.workspace = true
 anyhow.workspace = true
@@ -26,6 +28,21 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tiny_http = "0.12"
 wasmtime = { workspace = true }
+
+# Headless offscreen capture (/frame). Default OFF keeps the harness GPU-free
+# (AGENTS.md: harness pulls no wgpu/winit in headless CI). Enable with
+# `--features capture` on GPU machines for the vision endpoints.
+[features]
+default = []
+capture = ["dep:openengine-capture", "dep:base64"]
+
+[dependencies.openengine-capture]
+path = "../capture"
+optional = true
+
+[dependencies.base64]
+workspace = true
+optional = true
 
 [lints]
 workspace = true

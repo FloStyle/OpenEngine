@@ -361,3 +361,52 @@ fn schema_lists_spec21_components() {
         );
     }
 }
+
+#[test]
+fn ai_status_never_network_and_config_aware() {
+    let mut s = HarnessState::new();
+    let (c, r) = get(&mut s, "/ai/status");
+    assert_eq!(c, 200);
+    // configured may be true or false depending on env, but shape is fixed.
+    assert!(
+        r.get("configured").is_some(),
+        "ai/status needs 'configured': {r}"
+    );
+}
+
+#[test]
+fn ai_status_reflects_config_when_env_set() {
+    // Point OPENENGINE_AI_CONFIG at a temp Local config -> configured:true.
+    let tmp = std::env::temp_dir().join("ai_status_cfg.json");
+    std::fs::write(
+        &tmp,
+        r#"{"provider":{"kind":"local","endpoint":"http://127.0.0.1:8889/v1"},"model":"m"}"#,
+    )
+    .unwrap();
+    std::env::set_var("OPENENGINE_AI_CONFIG", tmp.to_str().unwrap());
+    let mut s = HarnessState::new();
+    let (c, r) = get(&mut s, "/ai/status");
+    assert_eq!(c, 200);
+    assert_eq!(r["configured"], true);
+    assert_eq!(r["provider"], "llama.cpp");
+    std::env::remove_var("OPENENGINE_AI_CONFIG");
+    let _ = std::fs::remove_file(&tmp);
+}
+
+// /frame needs wgpu (capture feature) — only test the typed stub here; the
+// real capture test lives in crates/capture and skips when no GPU.
+#[test]
+fn frame_returns_typed_response_or_png() {
+    let mut s = HarnessState::new();
+    let (c, r) = get(&mut s, "/frame");
+    // Either 200 (capture feature + GPU) or a typed 503 no-adapter.
+    if c == 200 {
+        assert!(
+            r.get("png_base64").is_some(),
+            "200 /frame must carry png_base64"
+        );
+        assert_eq!(r["mime"], "image/png");
+    } else {
+        assert_eq!(c, 503, "/frame without GPU/capture -> 503, got {c}: {r}");
+    }
+}
