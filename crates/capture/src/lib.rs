@@ -84,11 +84,13 @@ fn render_rgba(
     camera: &EditorCamera,
     w: u32,
     h: u32,
+    show_grid: bool,
 ) -> Result<Vec<u8>, CaptureError> {
     let (device, queue) =
         device().ok_or_else(|| CaptureError::NoAdapter("no wgpu adapter available".into()))?;
     let format = wgpu::TextureFormat::Rgba8Unorm;
     let mut renderer = SceneRenderer::new(&device, &queue, format);
+    renderer.set_show_grid(show_grid);
 
     let size = wgpu::Extent3d {
         width: w.max(1),
@@ -184,14 +186,28 @@ fn render_rgba(
 }
 
 /// Render `world` from `camera` and return a PNG-encoded image.
+///
+/// `show_grid` draws the ground grid so the capture matches the editor viewport
+/// (an AI should see the same scene the human edits).
 pub fn capture_world_png(
     world: &World,
     camera: &EditorCamera,
     w: u32,
     h: u32,
+    show_grid: bool,
 ) -> Result<Vec<u8>, CaptureError> {
-    let rgba = render_rgba(world, camera, w, h)?;
+    let rgba = render_rgba(world, camera, w, h, show_grid)?;
     encode_png(&rgba, w.max(1), h.max(1))
+}
+
+/// Render with the default (grid-off) look.
+pub fn capture_world_png_plain(
+    world: &World,
+    camera: &EditorCamera,
+    w: u32,
+    h: u32,
+) -> Result<Vec<u8>, CaptureError> {
+    capture_world_png(world, camera, w, h, false)
 }
 
 /// Encode tightly-packed RGBA8 bytes as PNG.
@@ -281,7 +297,7 @@ mod tests {
         };
         drop((device, queue));
         let w = sample_world();
-        let png = capture_world_png(&w, &cam(), 128, 128);
+        let png = capture_world_png(&w, &cam(), 128, 128, true);
         match png {
             Ok(bytes) => assert_eq!(
                 &bytes[..8],

@@ -221,7 +221,7 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
                 {"method":"GET","path":"/snapshot","desc":"return full in-memory state (all columns + tick)"},
                 {"method":"POST","path":"/restore","body":"{\"snapshot\":{...}}","desc":"replace the world from a snapshot"},
                 {"method":"GET","path":"/schema","desc":"spec-21 component registry (id/name/size/fields)"},
-                {"method":"POST","path":"/ask","body":"{\"message\":\"...\",\"propose\":true}","desc":"resident-operator: call the configured model (optionally apply its proposal batch)"}
+                {"method":"POST","path":"/ask","body":"{\"message\":\"...\",\"propose\":true,\"vision\":true}","desc":"resident-operator: call the configured model (vision attaches a /frame screenshot; propose parses+applies its ops batch)"}
             ]
         })),
         ("GET", "/hash") => {
@@ -555,6 +555,9 @@ fn ask(state: &mut HarnessState, body: &[u8]) -> (u16, Value) {
         .to_string();
     let system = v.get("system").and_then(|x| x.as_str()).map(str::to_string);
     let propose = v.get("propose").and_then(|x| x.as_bool()).unwrap_or(false);
+    // Ask the model to look at the live scene (vision). Text-only when the
+    // frame can't be captured (no capture feature / GPU) — never a crash.
+    let vision = v.get("vision").and_then(|x| x.as_bool()).unwrap_or(false);
 
     // Build the observe context (entities) to ground the model.
     let (entities, _tick) = state.observe(50);
@@ -587,9 +590,25 @@ fn ask(state: &mut HarnessState, body: &[u8]) -> (u16, Value) {
         Ok(a) => a,
         Err(e) => return err(500, format!("model init: {e}")),
     };
+    let user_turn = if vision {
+        match capture_png_b64(state) {
+            Some(b64) => openengine_ai::ChatTurn::with_image(
+                "user",
+                openengine_ai::TextImageContent {
+                    text: message,
+                    mime: "image/png".into(),
+                    base64: b64,
+                },
+            ),
+            // No frame available -> text-only fallback.
+            None => openengine_ai::ChatTurn::text("user", &message),
+        }
+    } else {
+        openengine_ai::ChatTurn::text("user", &message)
+    };
     let turns = vec![
         openengine_ai::ChatTurn::text("system", &system_prompt),
-        openengine_ai::ChatTurn::text("user", &message),
+        user_turn,
     ];
     let reply = match adapter.complete(&turns) {
         Ok(r) => r,
@@ -622,22 +641,34 @@ fn ask(state: &mut HarnessState, body: &[u8]) -> (u16, Value) {
     }
 }
 
+/// Capture the current world as a base64 PNG (ground grid on, matching the
+/// editor viewport). `None` when built without `capture` or no GPU adapter —
+/// callers fall back to a text-only turn.
+#[cfg(feature = "capture")]
+fn capture_png_b64(state: &HarnessState) -> Option<String> {
+    use base64::Engine as _;
+    let w = 640u32;
+    let h = 480u32;
+    let camera = openengine_editor::camera::EditorCamera::default();
+    let png = openengine_capture::capture_world_png(state.world(), &camera, w, h, true).ok()?;
+    Some(base64::engine::general_purpose::STANDARD.encode(&png))
+}
+
+/// (no capture feature) always `None`.
+#[cfg(not(feature = "capture"))]
+fn capture_png_b64(_state: &HarnessState) -> Option<String> {
+    None
+}
+
 /// `/frame` offscreen capture. Requires the `capture` feature (wgpu) + a GPU
 /// adapter; returns a typed 503 otherwise, never a crash.
 #[cfg(feature = "capture")]
 fn frame(state: &HarnessState, _path: &str) -> (u16, Value) {
-    // Parse optional w/h from the query; dispatch already passed path w/o query,
-    // so accept compact sizes only (the CLI /see requests /frame directly).
-    let w = 640u32;
-    let h = 480u32;
-    let camera = openengine_editor::camera::EditorCamera::default();
-    match openengine_capture::capture_world_png(state.world(), &camera, w, h) {
-        Ok(png) => {
-            use base64::Engine as _;
-            let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
-            ok(json!({ "png_base64": b64, "mime": "image/png", "width": w, "height": h }))
+    match capture_png_b64(state) {
+        Some(b64) => {
+            ok(json!({ "png_base64": b64, "mime": "image/png", "width": 640, "height": 480 }))
         }
-        Err(e) => err(503, format!("no-adapter: {e}")),
+        None => err(503, "no-adapter: no GPU adapter / wgpu capture unavailable"),
     }
 }
 

@@ -174,6 +174,10 @@ curl -s -X POST http://127.0.0.1:8080/ask -H 'Content-Type: application/json' \
   op rolls the whole batch back.
 - The proposal ops are: `spawn` (transform/scale/color), `set`
   (entity/component/value), `despawn` (entity).
+- **Vision**: pass `"vision":true` to give the model a `/frame` screenshot of the
+  live scene (ground grid on, matching the editor viewport) as an image part, so
+  a multimodal model can *see* what the engine is building. On a build without
+  the `capture` feature / a GPU it silently falls back to text.
 - Live loop: `bash scripts/ai-ask-test.sh` (`OPENENGINE_AI_LIVE=1`).
 
 ## Guarantees an agent can rely on

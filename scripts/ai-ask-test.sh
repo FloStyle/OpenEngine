@@ -27,4 +27,8 @@ curl -sS -X POST "$H/ask" -H 'Content-Type: application/json' \
 
 echo "== observe (entity should now exist) =="
 curl -sS "$H/observe" | python3 -c 'import sys,json;d=json.load(sys.stdin);print("entities",d["entity_count"])'
+
+echo "== /ask vision:true (model sees the scene) =="
+curl -sS -X POST "$H/ask" -H 'Content-Type: application/json' \
+  -d '{"message":"What do you SEE in the scene? Describe in one sentence.","vision":true}' | python3 -m json.tool
 echo "== ai-ask-test done =="
