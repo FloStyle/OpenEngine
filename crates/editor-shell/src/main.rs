@@ -122,6 +122,29 @@ struct Shell {
     plugins: PluginHost,
 }
 
+/// Vision: handle a screenshot request + save any delivered editor frame.
+///
+/// When the user clicks "📷 Send to AI", `app.screenshot_requested` is set; we
+/// issue an egui `ViewportCommand::Screenshot` once. egui-wgpu reads back the
+/// real framebuffer (3D scene + panels) and delivers `egui::Event::Screenshot`,
+/// which arrives on a later frame's `events`. We save it to `.editor/frame.png`
+/// so the VLM sees the SAME view the human edits.
+fn handle_screenshot_request(ctx: &egui::Context, app: &mut EditorApp, events: &[egui::Event]) {
+    if app.screenshot_requested {
+        app.screenshot_requested = false;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
+    }
+    for ev in events {
+        if let egui::Event::Screenshot { image, .. } = ev {
+            let path = std::path::Path::new(".editor/frame.png");
+            match openengine_editor_shell::screenshot::save_screenshot(image, path) {
+                Ok(()) => app.ai_notice = Some(format!("✅ frame → {}", path.display())),
+                Err(e) => app.ai_notice = Some(format!("screenshot failed: {e}")),
+            }
+        }
+    }
+}
+
 impl Shell {
     fn new(launch_play: Option<String>) -> Self {
         // Register the real Move tool behind the plugin boundary at startup.
@@ -239,6 +262,8 @@ impl Shell {
         // 1. Run egui to compute panels + the central viewport rect.
         let raw_input = state.take_egui_input(window);
         let ctx = app.egui_ctx.clone();
+        // Vision: respond to a screenshot request + save any returned frame.
+        handle_screenshot_request(&ctx, app, &raw_input.events);
         let full_output = ctx.run(raw_input, |ctx| app.ui(ctx));
         state.handle_platform_output(window, full_output.platform_output);
         app.step_simulation();

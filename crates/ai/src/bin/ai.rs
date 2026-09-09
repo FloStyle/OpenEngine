@@ -32,7 +32,8 @@ commands:
   load <model>            load <model> on the endpoint (unsloth inference API)
   test                    one-turn ping (key + model test)
   chat <msg> [--system <s>] [--image <file>]
-  see [--harness <url>] [<prompt>]   describe a live /frame screenshot
+  see [--harness <url>] [--editor] [<prompt>]   describe a live /frame or the
+                                               real editor window (--editor)
 config: --config <path> | $OPENENGINE_AI_CONFIG | ./config/ai.json";
 
 struct Args {
@@ -43,6 +44,7 @@ struct Args {
     system: Option<String>,
     image: Option<String>,
     harness: String,
+    editor: bool,
 }
 
 fn parse() -> Result<Args, String> {
@@ -55,6 +57,7 @@ fn parse() -> Result<Args, String> {
         system: None,
         image: None,
         harness: "http://127.0.0.1:8080".to_string(),
+        editor: false,
     };
     let mut i = 0;
     // The first non-flag token is the command.
@@ -103,6 +106,8 @@ fn parse() -> Result<Args, String> {
                     args.harness = v.to_string();
                 } else if let Some(v) = a.strip_prefix("--system=") {
                     args.system = Some(v.to_string());
+                } else if a == "--editor" {
+                    args.editor = true;
                 } else if a == "--help" || a == "-h" {
                     args.cmd = "help".to_string();
                 } else {
@@ -384,17 +389,28 @@ fn cmd_see(a: &Args) -> Result<(), String> {
             cfg.model
         ));
     }
-    // Fetch /frame from a running harness.
-    let url = format!("{}/frame?w=512&h=288", a.harness.trim_end_matches('/'));
-    let resp =
-        reqwest::blocking::get(&url).map_err(|e| format!("harness unreachable at {url}: {e}"))?;
-    if resp.status() != 200 {
-        return Err(format!("GET {url} -> http {}", resp.status()));
-    }
-    let j: serde_json::Value = resp.json().map_err(|e| format!("bad /frame json: {e}"))?;
-    let b64 = j["png_base64"]
-        .as_str()
-        .ok_or_else(|| format!("no png_base64 in /frame: {j}"))?;
+    // Image source: the real editor window (--editor, from the saved PNG) or the
+    // headless harness /frame.
+    let b64: String = if a.editor {
+        let file = ".editor/frame.png";
+        let bytes = std::fs::read(file).map_err(|e| {
+            format!("no editor frame at {file} ({e}). Click '📷 Send to AI' in the editor first.")
+        })?;
+        base64::engine::general_purpose::STANDARD.encode(&bytes)
+    } else {
+        // Fetch /frame from a running harness.
+        let url = format!("{}/frame?w=512&h=288", a.harness.trim_end_matches('/'));
+        let resp = reqwest::blocking::get(&url)
+            .map_err(|e| format!("harness unreachable at {url}: {e}"))?;
+        if resp.status() != 200 {
+            return Err(format!("GET {url} -> http {}", resp.status()));
+        }
+        let j: serde_json::Value = resp.json().map_err(|e| format!("bad /frame json: {e}"))?;
+        j["png_base64"]
+            .as_str()
+            .ok_or_else(|| format!("no png_base64 in /frame: {j}"))?
+            .to_string()
+    };
     let prompt = a
         .positionals
         .first()
@@ -405,7 +421,7 @@ fn cmd_see(a: &Args) -> Result<(), String> {
         TextImageContent {
             text: prompt,
             mime: "image/png".into(),
-            base64: b64.into(),
+            base64: b64,
         },
     )];
     let ad = adapter(&cfg)?;

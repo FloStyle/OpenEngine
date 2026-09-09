@@ -44,3 +44,6 @@ crates/core/assets/logic.wasm
 
 # --- Local secrets (.env): real .env is gitignored; .env.example is the committed template. ---
 !.env.example
+
+# Runtime AI screenshot output from the editor
+.editor/

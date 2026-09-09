@@ -3,6 +3,7 @@
 
 pub mod app;
 pub mod renderer;
+pub mod screenshot;
 
 pub use app::EditorApp;
 pub use renderer::SceneRenderer;

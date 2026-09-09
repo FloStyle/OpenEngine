@@ -74,6 +74,11 @@ pub struct EditorApp {
     /// Text buffer + tracked id for the rename field in the inspector.
     pub rename_buf: String,
     pub rename_target: Option<u32>,
+    /// Set true to request a screenshot of this frame (sent to a VLM via
+    /// `openengine-ai see --editor`). Consumed by the shell's render loop.
+    pub screenshot_requested: bool,
+    /// Session notice about the last screenshot/AI status.
+    pub ai_notice: Option<String>,
 }
 
 /// Unreal-like editor transform tools.
@@ -213,6 +218,8 @@ impl EditorApp {
             entity_names: HashMap::new(),
             rename_buf: String::new(),
             rename_target: None,
+            screenshot_requested: false,
+            ai_notice: None,
         };
         // Default framing so the spawned spheres (x in 0..25) are visible.
         app.camera.focus = glam::Vec3::new(12.5, 0.0, 0.0);
@@ -859,6 +866,16 @@ impl EditorApp {
                         .hint_text("scene.json"),
                 );
                 if let Some(msg) = self.scene_notice.clone() {
+                    ui.label(egui::RichText::new(msg).weak());
+                }
+                ui.separator();
+                // Vision: request a screenshot of the live editor (model sees
+                // exactly what you do). Written to .editor/frame.png by the shell.
+                if ui.button("📷 Send to AI").clicked() {
+                    self.screenshot_requested = true;
+                    self.scene_notice = Some("capturing frame for AI…".into());
+                }
+                if let Some(msg) = self.ai_notice.clone() {
                     ui.label(egui::RichText::new(msg).weak());
                 }
             });

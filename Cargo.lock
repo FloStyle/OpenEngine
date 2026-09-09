@@ -1902,6 +1902,7 @@ dependencies = [
  "openengine-editor",
  "openengine-math",
  "openengine-plugin-host",
+ "png",
  "pollster",
  "serde",
  "serde_json",
