@@ -597,6 +597,7 @@ impl EditorApp {
             self.hierarchy(ctx);
             self.inspector(ctx);
         }
+        self.status_bar(ctx);
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| {
@@ -712,6 +713,43 @@ impl EditorApp {
                 );
                 if let Some(msg) = self.scene_notice.clone() {
                     ui.label(egui::RichText::new(msg).weak());
+                }
+            });
+        });
+    }
+
+    /// Unreal-like bottom status bar: entity count, mode, tool, selection
+    /// position and, while playing, the engine (wasm/native).
+    fn status_bar(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                let w = self.state.active_world();
+                ui.label(format!("entities {}", w.entity_count()));
+                ui.separator();
+                ui.label(format!("mode {:?}", self.state.mode));
+                ui.separator();
+                if self.state.mode == EditorMode::Edit {
+                    ui.label(format!("tool {:?}", self.tool));
+                    ui.separator();
+                }
+                if let Some(&i) = self.selection.selected.first() {
+                    if let Some(tr) = w.get_transforms().and_then(|t| t.get(i as usize)) {
+                        let p = tr.position;
+                        ui.label(format!(
+                            "selected {i}  x {:.2} y {:.2} z {:.2}",
+                            p[0].to_num::<f32>(),
+                            p[1].to_num::<f32>(),
+                            p[2].to_num::<f32>()
+                        ));
+                        ui.separator();
+                    }
+                }
+                if self.state.mode == EditorMode::Playing {
+                    ui.label(if self.backend.host.is_some() {
+                        "engine: wasm"
+                    } else {
+                        "engine: native"
+                    });
                 }
             });
         });

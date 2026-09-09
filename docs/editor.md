@@ -13,7 +13,9 @@ left, an **inspector** (details) on the right, and a **toolbar** on top.
 │ + Add    │   spheres + checkered ground        │   Transform pos/scale│
 │ 🗑        │                                     │                      │
 │ entities │                                     │                      │
-└──────────┴─────────────────────────────────────┴──────────────────────┘
+├──────────┴─────────────────────────────────────┴──────────────────────┤
+│ status: entities · mode · tool · selected x/y/z · engine              │
+└───────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Shortcuts / interactions
