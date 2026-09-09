@@ -573,6 +573,24 @@ pub fn gameplay_tick(
         };
     }
 
+    // Keep actors from overlapping in XZ (deterministic AABB separation,
+    // ADR-0003): e.g. a chaser stops beside the player instead of inside it.
+    let sep_half = [I16F16::from_num(1) / I16F16::from_num(2); 3];
+    for _ in 0..4 {
+        let mut changed = false;
+        for i in 0..n {
+            for j in i + 1..n {
+                let a = t[i].position;
+                if separate_xz(&a, &mut t[j].position, sep_half) {
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
     let indices: Vec<u32> = (0..n as u32).collect();
     let mut delta = WorldDelta::default();
     delta.writes.push(ColumnWrite {
