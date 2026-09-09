@@ -33,6 +33,58 @@ fn hex_hash(h: u64) -> String {
     format!("{h:016x}")
 }
 
+/// Workspace root (from this crate: `crates/harness` -> repo root).
+fn repo_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+}
+
+/// Run `cmd args` in the repo root; returns (success, short tail message).
+fn run_cmd(cmd: &str, args: &[&str]) -> (bool, String) {
+    match std::process::Command::new(cmd)
+        .args(args)
+        .current_dir(repo_root())
+        .output()
+    {
+        Ok(o) => {
+            let tail = String::from_utf8_lossy(if o.stdout.is_empty() {
+                &o.stderr
+            } else {
+                &o.stdout
+            });
+            let tail: Vec<&str> = tail.lines().rev().take(3).collect();
+            let msg = if tail.is_empty() {
+                String::new()
+            } else {
+                tail.join(" | ")
+            };
+            (o.status.success(), msg)
+        }
+        Err(e) => (false, format!("spawn {cmd}: {e}")),
+    }
+}
+
+/// Run the engine's own verification gates and return a structured verdict
+/// (spec 53 / Phase 4): workspace tests + logic purity.
+fn verify() -> Value {
+    let (tests, t_msg) = run_cmd("cargo", &["test", "--workspace"]);
+    let (purity, p_msg) = run_cmd(
+        "python3",
+        &[
+            "brain/orchestrator.py",
+            "verify-wasm-purity",
+            "crates/core/assets/logic.wasm",
+        ],
+    );
+    let checks = json!([
+        {"name":"cargo test --workspace","ok":tests,"detail":t_msg},
+        {"name":"logic.wasm purity","ok":purity,"detail":p_msg},
+    ]);
+    let ok = tests && purity;
+    json!({ "ok": ok, "checks": checks })
+}
+
 /// Dispatch one request. `body` is the raw (already-read) request body.
 pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8]) -> (u16, Value) {
     match (method, path) {
@@ -40,7 +92,7 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
             "status": "ok",
             "version": VERSION,
             "headless": true,
-            "capabilities": ["observe", "spawn", "despawn", "set", "tick", "hash", "load_wasm", "prove", "transaction", "save", "load"],
+            "capabilities": ["observe", "spawn", "despawn", "set", "tick", "hash", "load_wasm", "prove", "transaction", "save", "load", "verify"],
         })),
         ("GET", "/spec") => ok(json!({
             "service": "openengine-harness",
@@ -58,7 +110,8 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
                 {"method":"POST","path":"/prove","body":"{\"n\":100}","desc":"determinism PASS/FAIL over two fresh states"},
                 {"method":"POST","path":"/transaction","body":"{\"ops\":[{method,path,body},...]}","desc":"atomic batch, rollback on any failing op"},
                 {"method":"POST","path":"/save","body":"{\"path\":\"scene.json\"}","desc":"write current scene to a file"},
-                {"method":"POST","path":"/load","body":"{\"path\":\"scene.json\"}","desc":"load a scene file into the world"}
+                {"method":"POST","path":"/load","body":"{\"path\":\"scene.json\"}","desc":"load a scene file into the world"},
+                {"method":"GET","path":"/verify","desc":"run repo build+tests+purity, return structured PASS/FAIL"}
             ]
         })),
         ("GET", "/hash") => {
@@ -258,6 +311,7 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
                 Err(e) => err(500, format!("read {path}: {e}")),
             }
         }
+        ("GET", "/verify") | ("POST", "/verify") => ok(verify()),
         _ => err(404, format!("no route: {method} {path}")),
     }
 }
