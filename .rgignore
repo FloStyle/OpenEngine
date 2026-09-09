@@ -1,0 +1,5 @@
+# ripgrep must never scan local secrets (agent searches).
+.env
+.env.*
+!.env.example
+**/.env
