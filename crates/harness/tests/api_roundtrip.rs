@@ -323,3 +323,41 @@ fn verify_returns_structured_verdict() {
     assert!(r.get("build").is_some() && r.get("tests").is_some() && r.get("purity").is_some());
     assert!(r.get("determinism").is_some());
 }
+
+#[test]
+fn schema_lists_spec21_components() {
+    let mut s = HarnessState::new();
+    let (c, r) = get(&mut s, "/schema");
+    assert_eq!(c, 200);
+    let comps = r["components"].as_array().expect("components array");
+    // At least the engine-band components an agent edits via /set are present.
+    let by_id: std::collections::HashMap<u64, &Value> = comps
+        .iter()
+        .map(|c| (c["id"].as_u64().unwrap(), c))
+        .collect();
+    for want in [
+        2u64, /*Transform*/
+        72,   /*Color*/
+        80,   /*Velocity3D*/
+        81,   /*Actor*/
+    ] {
+        assert!(
+            by_id.contains_key(&want),
+            "/schema must list component id {want}, got {r}"
+        );
+    }
+    // Name<->id index lets an agent address a component by name.
+    assert_eq!(r["component_ids"]["Transform"], 2);
+    assert_eq!(r["component_ids"]["Actor"], 81);
+    // A size is exposed for each component.
+    for c in comps {
+        assert!(c["size"].as_u64().is_some(), "component needs a size: {c}");
+        assert!(
+            c["fields"]
+                .as_array()
+                .map(|f| !f.is_empty())
+                .unwrap_or(false),
+            "component needs field names: {c}"
+        );
+    }
+}

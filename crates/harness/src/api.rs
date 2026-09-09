@@ -115,6 +115,81 @@ fn verify(state: &crate::state::HarnessState) -> Value {
     })
 }
 
+/// Introspection: the spec-21 component registry an agent may read/edit.
+///
+/// Sizes come from the real Rust structs (`size_of`), field names match each
+/// component's public API — so an agent knows *what* it can spawn/set without
+/// reading source. `component_ids` is the name→id index for `/set`.
+fn schema() -> Value {
+    use std::mem::size_of;
+    // (spec-21 id, name, byte size, public field names).
+    let rows: [(u32, &str, usize, &[&str]); 6] = [
+        (
+            openengine_ecs::POSITION,
+            "Position",
+            size_of::<openengine_ecs::Position>(),
+            &["x", "y"],
+        ),
+        (
+            openengine_ecs::VELOCITY,
+            "Velocity",
+            size_of::<openengine_ecs::Velocity>(),
+            &["x", "y"],
+        ),
+        (
+            openengine_contracts::comp::TRANSFORM,
+            "Transform",
+            size_of::<openengine_contracts::Transform>(),
+            &["position", "rotation", "scale"],
+        ),
+        (
+            openengine_contracts::comp::COLOR,
+            "Color",
+            size_of::<openengine_ecs::Color>(),
+            &["r", "g", "b", "a"],
+        ),
+        (
+            openengine_contracts::comp::VELOCITY3D,
+            "Velocity3D",
+            size_of::<openengine_contracts::Velocity3D>(),
+            &["linear"],
+        ),
+        (
+            openengine_contracts::comp::ACTOR,
+            "Actor",
+            size_of::<openengine_contracts::Actor>(),
+            &[
+                "kind",
+                "seed",
+                "grounded",
+                "jump_cd",
+                "move_speed",
+                "jump_force",
+            ],
+        ),
+    ];
+    let components: Vec<Value> = rows
+        .iter()
+        .map(|(id, name, size, fields)| {
+            json!({
+                "id": id,
+                "name": name,
+                "size": size,
+                "fields": fields,
+            })
+        })
+        .collect();
+    let mut by_name = serde_json::Map::new();
+    for (id, name, _, _) in &rows {
+        by_name.insert((*name).to_string(), json!(id));
+    }
+    json!({
+        "components": components,
+        "component_ids": Value::Object(by_name),
+        "note": "spec-21 registry; sizes are size_of::<T>() of the repr(C) Pod structs. ids 0/1/2 (2D bridge) and 72/80/81 (engine band).",
+    })
+}
+
 /// Dispatch one request. `body` is the raw (already-read) request body.
 pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8]) -> (u16, Value) {
     match (method, path) {
@@ -122,7 +197,7 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
             "status": "ok",
             "version": VERSION,
             "headless": true,
-            "capabilities": ["observe", "spawn", "despawn", "set", "tick", "physics", "hash", "load_wasm", "prove", "transaction", "save", "load", "verify", "reload_logic", "snapshot", "restore"],
+            "capabilities": ["observe", "spawn", "despawn", "set", "tick", "physics", "hash", "load_wasm", "prove", "transaction", "save", "load", "verify", "reload_logic", "snapshot", "restore", "schema"],
         })),
         ("GET", "/spec") => ok(json!({
             "service": "openengine-harness",
@@ -144,7 +219,8 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
                 {"method":"POST","path":"/load","body":"{\"path\":\"scene.json\"}","desc":"load a scene file into the world"},
                 {"method":"GET","path":"/verify","desc":"run repo build+tests+purity, return structured PASS/FAIL"},
                 {"method":"GET","path":"/snapshot","desc":"return full in-memory state (all columns + tick)"},
-                {"method":"POST","path":"/restore","body":"{\"snapshot\":{...}}","desc":"replace the world from a snapshot"}
+                {"method":"POST","path":"/restore","body":"{\"snapshot\":{...}}","desc":"replace the world from a snapshot"},
+                {"method":"GET","path":"/schema","desc":"spec-21 component registry (id/name/size/fields)"}
             ]
         })),
         ("GET", "/hash") => {
@@ -398,6 +474,7 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
             }
         }
         ("GET", "/verify") | ("POST", "/verify") => ok(verify(state)),
+        ("GET", "/schema") => ok(schema()),
         ("POST", "/reload_logic") => {
             let path = {
                 let v: Value = match serde_json::from_slice(body) {

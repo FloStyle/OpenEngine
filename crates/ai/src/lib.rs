@@ -1,12 +1,20 @@
-//! # Uniform model-adapter contract (interface only — no client implementation).
+//! # Uniform model adapter (contract + concrete clients).
 //!
 //! Per `ADR-0002` the finished OpenEngine mounts an AI as a resident operator.
 //! This crate fixes the *contract* an assistant talks through so that swapping
 //! the model — a cloud API key or a local `llama.cpp`/unsloth endpoint — needs
-//! **no assistant code change**. It deliberately ships only types + a trait;
-//! concrete clients (async HTTP etc.) are added later as swappable providers.
+//! **no assistant code change**.
+//!
+//! It ships the shared types + [`ModelAdapter`] trait, plus two concrete
+//! OpenAI-compatible clients behind the [`providers`] factory
+//! ([`providers::from_config`]): a DeepSeek API-key client and a local
+//! llama.cpp client. Pick one with a [`ModelConfig`] and call [`ModelAdapter::complete`].
 
 use serde::{Deserialize, Serialize};
+
+/// Concrete model clients (`DeepSeek` API key + local `llama.cpp`), selected by
+/// [`providers::from_config`]. Both speak OpenAI-compatible `chat/completions`.
+pub mod providers;
 
 /// Where + which model to talk to. `kind` discriminates a remote API key from a
 /// local OpenAI-compatible endpoint (llama.cpp / unsloth / vLLM ...).
@@ -80,15 +88,21 @@ pub struct ChatTurn {
 
 /// The uniform contract every provider (cloud key or local) satisfies.
 ///
-/// This is intentionally **interface-only**: no HTTP client is implemented here.
-/// A concrete provider implements `ModelAdapter` and is registered at runtime,
-/// so the assistant code never changes when you switch providers.
+/// Concrete clients live in [`providers`] and implement this trait; the
+/// assistant code only ever sees the trait + a config, so switching providers
+/// (DeepSeek API key vs local llama.cpp) needs no calling-code change.
 pub trait ModelAdapter: Send + Sync {
     /// The resolved model + provider this adapter talks to.
     fn config(&self) -> &ModelConfig;
 
-    /// Submit a conversation and return the assistant reply. Left for a
-    /// concrete provider to implement.
+    /// Short provider label used to identify which concrete client an adapter
+    /// is (`"deepseek"`, `"llama.cpp"`) without downcasting.
+    fn name(&self) -> &str {
+        "unknown"
+    }
+
+    /// Submit a conversation and return the assistant reply. Implemented by a
+    /// concrete provider.
     fn complete(&self, turns: &[ChatTurn]) -> Result<String, AdapterError>;
 }
 

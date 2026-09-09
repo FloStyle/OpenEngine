@@ -76,6 +76,10 @@ egui-winit = { version = "0.32", default-features = false, features = ["wayland"
 pollster = { version = "0.4" }
 anyhow   = { version = "1" }
 
+# HTTP for concrete ModelAdapter clients (DeepSeek API key + local llama.cpp).
+# Blocking + rustls keeps the ai crate headless (no native TLS/tokio stack).
+reqwest  = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+
 # ---- Domain B : Deterministic math + zero-copy wire format ---------------
 # fixed is the ONLY sanctioned fractional representation in game logic.
 fixed    = { version = "1.28", default-features = false }
