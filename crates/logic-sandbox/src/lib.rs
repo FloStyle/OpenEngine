@@ -745,3 +745,80 @@ mod gameplay_tests {
         );
     }
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// § Physics (ADR-0003) — deterministic Domain-B motion/floor primitives.
+//
+// Pure, fixed-point building blocks a future physics step composes: gravity,
+// velocity integration, and a floor (ground plane) resolve. Deterministic by
+// construction (same inputs ⇒ same outputs); no f32, no IO, [PURE]. ADR-0003
+// keeps runtime physics in Domain B so results are bit-reproducible and
+// verifiable by the engine's determinism gate.
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Apply one tick of gravity to a vertical velocity (units/tick^2 → units/tick).
+pub fn gravity_apply(vy: I16F16, gravity_per_tick: I16F16) -> I16F16 {
+    vy + gravity_per_tick
+}
+
+/// Integrate a velocity into a position by one tick (units/tick).
+pub fn integrate(pos: I16F16, vel: I16F16) -> I16F16 {
+    pos + vel
+}
+
+/// Resolve against a horizontal floor at y=`floor`. Returns (y, vy, landed):
+/// if the motion would pass below the floor, clamp to it and zero vy.
+pub fn floor_resolve(pos_y: I16F16, vy: I16F16, floor: i32) -> (I16F16, I16F16, bool) {
+    let f = I16F16::from_num(floor);
+    if pos_y <= f && vy <= I16F16::from_num(0) {
+        (f, I16F16::from_num(0), true)
+    } else {
+        (pos_y, vy, false)
+    }
+}
+
+#[cfg(test)]
+mod physics_tests {
+    use super::*;
+
+    #[test]
+    fn gravity_pulls_down() {
+        let g = I16F16::from_num(-2);
+        let v0 = I16F16::from_num(0);
+        assert!(gravity_apply(v0, g).to_num::<f32>() < 0.0);
+        assert!(gravity_apply(I16F16::from_num(10), g).to_num::<f32>() < 10.0);
+    }
+
+    #[test]
+    fn floor_clamps_and_lands() {
+        let (y, vy, landed) = floor_resolve(I16F16::from_num(-1), I16F16::from_num(-3), 0);
+        assert!(landed);
+        assert_eq!(y.to_num::<i32>(), 0);
+        assert_eq!(vy.to_num::<i32>(), 0);
+        // Above the floor with upward velocity: not landed.
+        let (_, _, landed2) = floor_resolve(I16F16::from_num(5), I16F16::from_num(2), 0);
+        assert!(!landed2);
+    }
+
+    #[test]
+    fn physics_is_deterministic_3x() {
+        let g = I16F16::from_num(-2);
+        let run = |vy_in: i32, pos_in: i32| -> (i32, i32) {
+            let mut pos = I16F16::from_num(pos_in);
+            let mut vy = I16F16::from_num(vy_in);
+            for _ in 0..40 {
+                vy = gravity_apply(vy, g);
+                pos = integrate(pos, vy);
+                let (ny, nvy, _) = floor_resolve(pos, vy, 0);
+                pos = ny;
+                vy = nvy;
+            }
+            (pos.to_num::<i32>(), vy.to_num::<i32>())
+        };
+        let a = run(20, 100);
+        let b = run(20, 100);
+        let c = run(20, 100);
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+    }
+}
