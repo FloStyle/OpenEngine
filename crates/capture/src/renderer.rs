@@ -1,4 +1,6 @@
-//! Minimal 3D scene renderer for the editor viewport (Domain A).
+//! Minimal 3D scene renderer — copy of the editor-shell viewport pipeline kept
+//! here so headless capture renders identically to the GUI without pulling
+//! egui/winit. Same sky / checkered ground / per-entity spheres.
 //!
 //! Blender-style lit scene: a checkered ground plane plus each entity drawn as
 //! an analytic sphere lit by one directional light + ambient (no depth sort, a

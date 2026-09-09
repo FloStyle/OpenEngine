@@ -13,6 +13,8 @@
 
 pub mod deepseek;
 pub mod llama_cpp;
+/// Model discovery + unsloth load/vision-check against a running server.
+pub mod management;
 pub(crate) mod openai;
 
 use crate::{AdapterError, ModelAdapter, ModelConfig, ProviderConfig};

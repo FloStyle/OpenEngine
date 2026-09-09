@@ -27,6 +27,9 @@ commands:
   describe                print resolved provider/model/endpoint
   providers               list built-in provider kinds
   models                  model catalog table (id, vision, context)
+  list                    DISCOVER models on the running endpoint (/v1/models)
+  check <model>           ask the endpoint whether <model> is vision-capable
+  load <model>            load <model> on the endpoint (unsloth inference API)
   test                    one-turn ping (key + model test)
   chat <msg> [--system <s>] [--image <file>]
   see [--harness <url>] [<prompt>]   describe a live /frame screenshot
@@ -130,6 +133,19 @@ fn provider_label(cfg: &ModelConfig) -> &'static str {
     }
 }
 
+/// Whether an image turn may be attempted. A DeepSeek `ApiKey` model is
+/// definitively text-only (hard-block); a `Local` server may host a VLM even
+/// when its `is_vision` metadata is missing, so we allow the attempt and let
+/// the server reject it if the loaded model truly cannot see.
+fn can_attempt_image(cfg: &ModelConfig) -> bool {
+    match &cfg.provider {
+        openengine_ai::ProviderConfig::Local { .. } => true,
+        openengine_ai::ProviderConfig::ApiKey { .. } => {
+            openengine_ai::config::vision_supported(cfg)
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let a = match parse() {
         Ok(a) => a,
@@ -142,6 +158,9 @@ fn main() -> ExitCode {
         "describe" => cmd_describe(&a),
         "providers" => cmd_providers(),
         "models" => cmd_models(),
+        "list" => cmd_list(&a),
+        "check" => cmd_check(&a),
+        "load" => cmd_load(&a),
         "test" => cmd_test(&a),
         "chat" => cmd_chat(&a),
         "see" => cmd_see(&a),
@@ -208,6 +227,63 @@ fn cmd_models() -> Result<(), String> {
     Ok(())
 }
 
+/// Discovery: list models the running endpoint actually serves (/v1/models).
+fn cmd_list(a: &Args) -> Result<(), String> {
+    let (cfg, _src) = load(a.config.as_deref(), a.model.as_deref())?;
+    let models = openengine_ai::providers::management::list_models(&cfg)
+        .map_err(|e: AdapterError| format!("discovery failed: {e}"))?;
+    println!("{:<4} {:<6} model id", "", "state");
+    for m in &models {
+        println!(
+            "{:<4} {:<6} {}",
+            if m.loaded { "▶" } else { "" },
+            if m.loaded { "loaded" } else { "avail" },
+            m.id
+        );
+    }
+    println!("({} models on endpoint)", models.len());
+    Ok(())
+}
+
+/// Check whether a model id is vision-capable (unsloth check-vision).
+fn cmd_check(a: &Args) -> Result<(), String> {
+    let (cfg, _src) = load(a.config.as_deref(), a.model.as_deref())?;
+    let model = a
+        .positionals
+        .first()
+        .cloned()
+        .unwrap_or_else(|| cfg.model.clone());
+    let vision = openengine_ai::providers::management::check_vision(&cfg, &model)
+        .map_err(|e: AdapterError| format!("vision check failed: {e}"))?;
+    println!(
+        "{model}: {}",
+        if vision {
+            "VISION-capable"
+        } else {
+            "text (is_vision=false)"
+        }
+    );
+    println!(
+        "note: metadata may lag — a live image request is the real test (see `openengine-ai see` / `chat --image`)."
+    );
+    Ok(())
+}
+
+/// Load a model on the endpoint (unsloth inference API). Returns vision status.
+fn cmd_load(a: &Args) -> Result<(), String> {
+    let (cfg, _src) = load(a.config.as_deref(), a.model.as_deref())?;
+    let model = a
+        .positionals
+        .first()
+        .cloned()
+        .unwrap_or_else(|| cfg.model.clone());
+    println!("loading {model} …");
+    let vision = openengine_ai::providers::management::load_model(&cfg, &model)
+        .map_err(|e: AdapterError| format!("load failed: {e}"))?;
+    println!("loaded {model} — vision={vision}");
+    Ok(())
+}
+
 fn adapter(cfg: &ModelConfig) -> Result<Box<dyn openengine_ai::ModelAdapter>, String> {
     from_config(cfg).map_err(|e: AdapterError| e.to_string())
 }
@@ -250,12 +326,15 @@ fn cmd_chat(a: &Args) -> Result<(), String> {
     if prompt.is_empty() {
         return Err("chat needs a message".into());
     }
-    // Optional image -> multimodal turn (must be vision-capable).
+    // Optional image -> multimodal turn. A known-text DeepSeek ApiKey model is
+    // hard-blocked; a Local server (llama.cpp/unsloth) may host a VLM even when
+    // metadata says no, so we attempt and let the server decide (it returns a
+    // typed "does not support vision" if the loaded model truly can't see).
     if let Some(img) = &a.image {
-        if !openengine_ai::config::vision_supported(&cfg) {
+        if !can_attempt_image(&cfg) {
             return Err(format!(
-                "model '{}' is not marked vision-capable; cannot send an image. \
-                 Use a vision model (see `openengine-ai models`).",
+                "model '{}' is a text-only DeepSeek model; cannot send an image. \
+                 Point --config at a vision model or a local VLM.",
                 cfg.model
             ));
         }
@@ -293,10 +372,12 @@ fn cmd_chat(a: &Args) -> Result<(), String> {
 
 fn cmd_see(a: &Args) -> Result<(), String> {
     let (cfg, _src) = load(a.config.as_deref(), a.model.as_deref())?;
-    if !openengine_ai::config::vision_supported(&cfg) {
+    // A Local server may host a VLM even if metadata is missing; let the server
+    // decide. Only hard-block a known-text DeepSeek ApiKey model.
+    if !can_attempt_image(&cfg) {
         return Err(format!(
-            "configured model '{}' is not vision-capable — /see needs a VLM. \
-             Pick a vision model or point at a VLM endpoint.",
+            "configured model '{}' is a text-only DeepSeek model — /see needs a VLM. \
+             Point --config at a vision model or a local VLM endpoint.",
             cfg.model
         ));
     }

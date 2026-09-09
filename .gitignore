@@ -40,3 +40,4 @@ crates/core/assets/logic.wasm
 
 # Local AI configs (never commit real keys/endpoints)
 /config/ai.json
+/config/ai-vision.json

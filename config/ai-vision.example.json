@@ -1,0 +1,5 @@
+{
+  "provider": { "kind": "local", "endpoint": "http://127.0.0.1:8889/v1", "key_env": "UNSLOTH_API_KEY" },
+  "model": "unsloth/Qwen3.6-35B-A3B-MTP-GGUF",
+  "vision": true
+}
