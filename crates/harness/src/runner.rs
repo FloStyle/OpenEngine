@@ -143,3 +143,21 @@ pub fn run_forward(
         }
     })
 }
+
+/// Run the scene with the Domain-B **deterministic physics** (gravity + floor +
+/// AABB separation) for `frames` ticks — no wasm module required. Half-extents,
+/// gravity and floor come from `physics` (defaults if `None`).
+pub fn run_physics(
+    scene_path: &str,
+    frames: u64,
+    physics: Option<(f32, f32, f32, [f32; 3])>, // (gravity, floor, _, half)
+) -> Result<RunReport, String> {
+    let bytes = std::fs::read(scene_path).map_err(|e| format!("read scene {scene_path}: {e}"))?;
+    let scene: SceneFile =
+        serde_json::from_slice(&bytes).map_err(|e| format!("bad scene json: {e}"))?;
+    let mut state = HarnessState::new();
+    state.import_scene(&scene)?;
+    let (gravity, floor, _unused, half) = physics.unwrap_or((-0.05, 0.0, 0.0, [1.0, 1.0, 1.0]));
+    state.physics_tick(half, gravity, floor, frames)?;
+    Ok(report_from(&state))
+}

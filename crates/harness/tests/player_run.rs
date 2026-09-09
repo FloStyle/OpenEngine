@@ -152,3 +152,44 @@ fn scripted_input_replay_is_deterministic_and_moves_both_axes() {
         "identical scripts must replay identically"
     );
 }
+
+#[test]
+fn runner_physics_drives_scene_to_rest_separated() {
+    // Build a temp scene with two bodies high above the floor.
+    let mut s = HarnessState::new();
+    s.spawn([0.0, 10.0, 0.0], [1.0, 1.0, 1.0], [255, 0, 0, 255]);
+    s.spawn([1.0, 10.0, 0.0], [1.0, 1.0, 1.0], [0, 255, 0, 255]);
+    let path =
+        std::env::temp_dir().join(format!("openengine_phys_scene_{}.json", std::process::id()));
+    let p = path.to_str().unwrap().to_string();
+    let scene: openengine_harness::state::SceneFile = s.export_scene();
+    std::fs::write(&p, serde_json::to_vec(&scene).unwrap()).unwrap();
+
+    let r = runner::run_physics(&p, 400, None).expect("physics run");
+    assert_eq!(r.entity_count, 2);
+    let y = |i: usize| r.entities[i].transform[1];
+    let x = |i: usize| r.entities[i].transform[0];
+    assert!(
+        y(0).abs() < 0.001 && y(1).abs() < 0.001,
+        "bodies rest at y=0"
+    );
+    assert!((x(0) - x(1)).abs() > 0.5, "bodies separated in X");
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn runner_physics_is_deterministic() {
+    let mut s = HarnessState::new();
+    s.spawn([0.0, 10.0, 0.0], [1.0, 1.0, 1.0], [255, 0, 0, 255]);
+    s.spawn([1.0, 10.0, 0.0], [1.0, 1.0, 1.0], [0, 255, 0, 255]);
+    let path =
+        std::env::temp_dir().join(format!("openengine_phys_det_{}.json", std::process::id()));
+    let p = path.to_str().unwrap().to_string();
+    let scene: openengine_harness::state::SceneFile = s.export_scene();
+    std::fs::write(&p, serde_json::to_vec(&scene).unwrap()).unwrap();
+    let a = runner::run_physics(&p, 400, None).unwrap();
+    let b = runner::run_physics(&p, 400, None).unwrap();
+    assert_eq!(a.hash, b.hash);
+    assert_eq!(a.entities, b.entities);
+    let _ = std::fs::remove_file(&path);
+}
