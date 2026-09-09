@@ -67,7 +67,8 @@ fn run_cmd(cmd: &str, args: &[&str]) -> (bool, String) {
 
 /// Run the engine's own verification gates and return a structured verdict
 /// (spec 53 / Phase 4): workspace tests + logic purity.
-fn verify() -> Value {
+fn verify(state: &crate::state::HarnessState) -> Value {
+    let (build, build_msg) = run_cmd("cargo", &["build", "--workspace"]);
     let (tests, t_msg) = run_cmd("cargo", &["test", "--workspace"]);
     let (purity, p_msg) = run_cmd(
         "python3",
@@ -77,12 +78,41 @@ fn verify() -> Value {
             "crates/core/assets/logic.wasm",
         ],
     );
-    let checks = json!([
-        {"name":"cargo test --workspace","ok":tests,"detail":t_msg},
-        {"name":"logic.wasm purity","ok":purity,"detail":p_msg},
-    ]);
-    let ok = tests && purity;
-    json!({ "ok": ok, "checks": checks })
+    // Determinism gate: two fresh states replay 16 ticks identically.
+    let mut det_ok = false;
+    let mut det_hash = String::new();
+    {
+        let mut a = state.duplicate();
+        let mut b = state.duplicate();
+        if a.tick_n(16).is_ok() && b.tick_n(16).is_ok() {
+            let ha = a.hash();
+            let hb = b.hash();
+            det_ok = ha == hb;
+            det_hash = format!("{ha:016x}");
+        }
+    }
+    let mut errors: Vec<Value> = Vec::new();
+    if !build {
+        errors.push(json!({"gate":"build","detail":build_msg}));
+    }
+    if !tests {
+        errors.push(json!({"gate":"tests","detail":t_msg}));
+    }
+    if !purity {
+        errors.push(json!({"gate":"purity","detail":p_msg}));
+    }
+    if !det_ok {
+        errors.push(json!({"gate":"determinism","detail":"hash mismatch"}));
+    }
+    let status = if errors.is_empty() { "PASS" } else { "FAIL" };
+    json!({
+        "status": status,
+        "build": { "ok": build },
+        "tests": { "ok": tests },
+        "purity": { "ok": purity, "status": if purity { "[PURE]".to_string() } else { p_msg } },
+        "determinism": { "ok": det_ok, "hash": det_hash },
+        "errors": errors
+    })
 }
 
 /// Dispatch one request. `body` is the raw (already-read) request body.
@@ -92,7 +122,7 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
             "status": "ok",
             "version": VERSION,
             "headless": true,
-            "capabilities": ["observe", "spawn", "despawn", "set", "tick", "hash", "load_wasm", "prove", "transaction", "save", "load", "verify", "reload_logic"],
+            "capabilities": ["observe", "spawn", "despawn", "set", "tick", "hash", "load_wasm", "prove", "transaction", "save", "load", "verify", "reload_logic", "snapshot", "restore"],
         })),
         ("GET", "/spec") => ok(json!({
             "service": "openengine-harness",
@@ -111,7 +141,9 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
                 {"method":"POST","path":"/transaction","body":"{\"ops\":[{method,path,body},...]}","desc":"atomic batch, rollback on any failing op"},
                 {"method":"POST","path":"/save","body":"{\"path\":\"scene.json\"}","desc":"write current scene to a file"},
                 {"method":"POST","path":"/load","body":"{\"path\":\"scene.json\"}","desc":"load a scene file into the world"},
-                {"method":"GET","path":"/verify","desc":"run repo build+tests+purity, return structured PASS/FAIL"}
+                {"method":"GET","path":"/verify","desc":"run repo build+tests+purity, return structured PASS/FAIL"},
+                {"method":"GET","path":"/snapshot","desc":"return full in-memory state (all columns + tick)"},
+                {"method":"POST","path":"/restore","body":"{\"snapshot\":{...}}","desc":"replace the world from a snapshot"}
             ]
         })),
         ("GET", "/hash") => {
@@ -311,7 +343,26 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
                 Err(e) => err(500, format!("read {path}: {e}")),
             }
         }
-        ("GET", "/verify") | ("POST", "/verify") => ok(verify()),
+        // ── In-memory fork/rollback: snapshot + restore (all columns + tick) ──
+        ("GET", "/snapshot") => {
+            let s = state.export_scene();
+            ok(serde_json::to_value(&s).unwrap_or(Value::Null))
+        }
+        ("POST", "/restore") => {
+            let v: Value = match serde_json::from_slice(body) {
+                Ok(x) => x,
+                Err(e) => return err(400, format!("bad json: {e}")),
+            };
+            let snap = v.get("snapshot").unwrap_or(&v).clone();
+            match serde_json::from_value::<crate::state::SceneFile>(snap) {
+                Ok(scene) => match state.import_scene(&scene) {
+                    Ok(()) => ok(json!({ "ok": true, "entities": scene.entities.len() })),
+                    Err(e) => err(400, e),
+                },
+                Err(e) => err(400, format!("bad snapshot json: {e}")),
+            }
+        }
+        ("GET", "/verify") | ("POST", "/verify") => ok(verify(state)),
         ("POST", "/reload_logic") => {
             let path = {
                 let v: Value = match serde_json::from_slice(body) {

@@ -6,7 +6,7 @@
 
 use openengine_harness::api;
 use openengine_harness::{bind, serve, HarnessState};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 
@@ -279,4 +279,47 @@ fn scene_round_trip_then_ticks_stay_deterministic() {
         "two loads of the same scene must tick identically"
     );
     let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn snapshot_restore_forks_and_rolls_back_in_memory() {
+    let mut s = HarnessState::new();
+    post(
+        &mut s,
+        "/spawn",
+        r#"{"transform":[1,2,3],"color":[10,20,30,255]}"#,
+    );
+    let h0 = format!("{:016x}", s.hash());
+    let (c, snap) = get(&mut s, "/snapshot");
+    assert_eq!(c, 200);
+    post(
+        &mut s,
+        "/spawn",
+        r#"{"transform":[9,9,9],"color":[200,200,200,255]}"#,
+    );
+    assert_eq!(s.entity_count(), 2);
+    let body = serde_json::to_string(&json!({ "snapshot": snap })).unwrap();
+    let (c, r) = post(&mut s, "/restore", &body);
+    assert_eq!(c, 200, "restore failed: {r}");
+    assert_eq!(s.entity_count(), 1, "restore must undo the spawn");
+    let h1 = format!("{:016x}", s.hash());
+    assert_eq!(
+        h0, h1,
+        "restore must reproduce the original world bit-for-bit"
+    );
+}
+
+// Heavy (spawns cargo build/test + purity); kept out of the default fast set.
+#[test]
+#[ignore]
+fn verify_returns_structured_verdict() {
+    let mut s = HarnessState::new();
+    let (c, r) = get(&mut s, "/verify");
+    assert_eq!(c, 200);
+    assert!(
+        r.get("status").is_some(),
+        "verify must return a status: {r}"
+    );
+    assert!(r.get("build").is_some() && r.get("tests").is_some() && r.get("purity").is_some());
+    assert!(r.get("determinism").is_some());
 }

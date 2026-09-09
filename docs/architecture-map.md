@@ -16,7 +16,9 @@
 | `crates/core` | Domain A host: renderer, sandbox host, movement/gameplay wasm hosts | `01`, `10-hot-reload` |
 | `crates/editor` | Headless editor core (Edit/Play, commands, undo, selection, camera, grid/snap/move math) | `22-edit-vs-play`, `23-undo-redo`, `07/08/09`, `51` |
 | `crates/editor-shell` | egui editor over wgpu — layout UE-like; tools Q/W, Move+drag/snap, Add/Delete/Duplicate, Save/Load, `--play` | `24-editor-viewport`, `25-editor-shell`, `docs/editor.md` |
-| `crates/harness` | Headless live-state surface for agents/AI: HTTP server (`/prove` `/transaction` `/save` `/load` `/verify`) + `openengine-runner` (headless player) | `51`, `52`, `16`, `50`, `ADR-0001/0002` |
+| `crates/harness` | Headless live-state surface for agents/AI: HTTP server (`/observe` `/spawn` `/set` `/tick` `/hash` `/load_wasm` `/prove` `/transaction` `/save` `/load` `/snapshot` `/restore` `/verify` `/reload_logic`) + `openengine-runner` (headless player) | `51`, `52`, `16`, `50`, `ADR-0001/0002`, `docs/self-heal.md` |
+| `.agents/skills/openengine-self-dev.md` | Agent recipe: observe→propose→verify→apply + rollback | `52` |
+| `scripts/selfdev.sh` | Canned self-development loop (observe/spawn/verify/prove/restore) | `52` |
 | `examples/` | Authored demo scenes (e.g. `demo-chase.json`) | `50-build-deploy` |
 | `crates/ai` | Uniform model-adapter CONTRACT (types + trait; API key or local llama.cpp/unsloth). Interface only, no client. | `52-ai-developer-surface`, `ADR-0002` |
 | `crates/plugin-host` | Plugin boundary (Phase 3): `Plugin` trait + `PluginHost` lifecycle. In-process; dylib = ADR-0005. | `29-plugins`, `ADR-0005` |
