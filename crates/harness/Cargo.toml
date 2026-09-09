@@ -11,6 +11,7 @@ name = "openengine-runner"
 path = "src/bin/runner.rs"
 
 [dependencies]
+openengine-logic-sandbox = { path = "../logic-sandbox" }
 openengine-ecs = { path = "../ecs" }
 openengine-contracts = { workspace = true }
 openengine-math = { workspace = true }

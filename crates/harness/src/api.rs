@@ -122,7 +122,7 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
             "status": "ok",
             "version": VERSION,
             "headless": true,
-            "capabilities": ["observe", "spawn", "despawn", "set", "tick", "hash", "load_wasm", "prove", "transaction", "save", "load", "verify", "reload_logic", "snapshot", "restore"],
+            "capabilities": ["observe", "spawn", "despawn", "set", "tick", "physics", "hash", "load_wasm", "prove", "transaction", "save", "load", "verify", "reload_logic", "snapshot", "restore"],
         })),
         ("GET", "/spec") => ok(json!({
             "service": "openengine-harness",
@@ -135,6 +135,7 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
                 {"method":"POST","path":"/despawn","body":"{\"entity\":i}"},
                 {"method":"POST","path":"/set","body":"{\"entity\":i,\"component\":\"transform|scale|color\",\"value\":[...]}"},
                 {"method":"POST","path":"/tick","body":"{\"n\":100}"},
+                {"method":"POST","path":"/physics","body":"{\"n\":100,\"half\":[1,1,1],\"gravity\":-0.05,\"floor\":0}","desc":"Domain-B deterministic physics (gravity+floor+AABB)"},
                 {"method":"GET","path":"/hash","desc":"determinism hash"},
                 {"method":"POST","path":"/load_wasm","body":"{\"path\":\"...\"}"},
                 {"method":"POST","path":"/prove","body":"{\"n\":100}","desc":"determinism PASS/FAIL over two fresh states"},
@@ -231,6 +232,40 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
                 .unwrap_or(1)
                 .min(100_000);
             match state.tick_n(n) {
+                Ok(()) => {
+                    ok(json!({ "ticks": n, "hash": hex_hash(state.hash()), "tick": state.tick() }))
+                }
+                Err(e) => err(500, e),
+            }
+        }
+        // Domain-B deterministic physics (gravity + floor + AABB separation).
+        ("POST", "/physics") => {
+            let v: Value = match serde_json::from_slice(body) {
+                Ok(x) => x,
+                Err(e) => return err(400, format!("bad json: {e}")),
+            };
+            let n = v
+                .get("n")
+                .and_then(|x| x.as_u64())
+                .unwrap_or(1)
+                .min(100_000);
+            let gravity = v.get("gravity").and_then(|x| x.as_f64()).unwrap_or(-0.05) as f32;
+            let floor = v.get("floor").and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
+            let half = v
+                .get("half")
+                .and_then(|x| x.as_array())
+                .map(|a| {
+                    a.iter()
+                        .map(|e| e.as_f64().unwrap_or(1.0) as f32)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_else(|| vec![1.0, 1.0, 1.0]);
+            let half = [
+                half.first().copied().unwrap_or(1.0),
+                half.get(1).copied().unwrap_or(1.0),
+                half.get(2).copied().unwrap_or(1.0),
+            ];
+            match state.physics_tick(half, gravity, floor, n) {
                 Ok(()) => {
                     ok(json!({ "ticks": n, "hash": hex_hash(state.hash()), "tick": state.tick() }))
                 }

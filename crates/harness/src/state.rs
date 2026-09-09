@@ -280,6 +280,49 @@ impl HarnessState {
         Ok(())
     }
 
+    /// Drive the world with the Domain-B deterministic physics system
+    /// (`physics_delta`): gravity + floor on Y + AABB XZ separation, `count`
+    /// ticks, applied through the single mutation channel.
+    pub fn physics_tick(
+        &mut self,
+        half: [f32; 3],
+        gravity: f32,
+        floor: f32,
+        count: u64,
+    ) -> Result<(), String> {
+        let params = openengine_logic_sandbox::PhysicsParams {
+            gravity: F::from_num(gravity),
+            floor: floor as i32,
+            half: [
+                F::from_num(half[0]),
+                F::from_num(half[1]),
+                F::from_num(half[2]),
+            ],
+        };
+        for _ in 0..count {
+            let n = self.world.entity_count();
+            if n == 0 {
+                self.tick += 1;
+                continue;
+            }
+            let t = self
+                .world
+                .get_transforms()
+                .map(|s| s[..n].to_vec())
+                .unwrap_or_default();
+            let v = self
+                .world
+                .get_velocity_3d()
+                .map(|s| s[..n].to_vec())
+                .unwrap_or_default();
+            let delta = openengine_logic_sandbox::physics_delta(&t, &v, &params)
+                .map_err(|e| format!("physics_delta: {e}"))?;
+            self.world.apply_delta(&delta);
+            self.tick += 1;
+        }
+        Ok(())
+    }
+
     /// Load a wasm logic module that exposes `openengine_gameplay_tick`.
     pub fn load_wasm(&mut self, path: &str) -> Result<(), String> {
         self.guest = Some(WasmGuest::load(path).map_err(|e| format!("load wasm: {e}"))?);
