@@ -25,6 +25,7 @@ use openengine_editor::commands::{ModifyTransformCommand, UndoRedoManager};
 use openengine_editor::grid::{ground_grab_offset, move_actor_on_ground, EditorGrid};
 use openengine_editor::selection::{pick, SelectionModel};
 use openengine_editor::state::{EditorMode, EditorState};
+use openengine_editor::transform_edit::{drag_to_scale, drag_to_yaw, rotate_yaw, scale_uniform};
 use openengine_math::I16F16;
 
 /// The interactive editor state + egui handles + the 3D camera.
@@ -61,6 +62,8 @@ pub struct EditorApp {
     pub snap: bool,
     /// (grab XZ offset, entity index) captured when a Move drag begins.
     pub move_grab: Option<([f32; 2], u32)>,
+    /// (start NDC x, original Transform, entity) captured for Rotate/Scale drags.
+    pub rs_grab: Option<(f32, Transform, u32)>,
     /// Unreal "Play-in-Editor": when playing, hide side panels so the viewport
     /// fills the window.
     pub pie_mode: bool,
@@ -76,6 +79,8 @@ pub struct EditorApp {
 pub enum EditorTool {
     Select,
     Move,
+    Rotate,
+    Scale,
 }
 
 /// Loads + holds the guest gameplay module and paces ticks at a fixed 60 Hz.
@@ -200,6 +205,7 @@ impl EditorApp {
             grid_step: 0.5,
             snap: true,
             move_grab: None,
+            rs_grab: None,
             pie_mode: false,
             entity_names: HashMap::new(),
             rename_buf: String::new(),
@@ -349,25 +355,25 @@ impl EditorApp {
         if self.state.mode != EditorMode::Edit {
             self.move_active = false;
             self.move_grab = None;
+            self.rs_grab = None;
             return;
         }
-        if self.tool != EditorTool::Move {
-            return;
-        }
+        // No drag in Select mode.
         let Some(&ent) = self.selection.selected.first() else {
+            self.move_active = false;
+            self.move_grab = None;
+            self.rs_grab = None;
             return;
         };
         let Some(rect) = self.viewport_rect else {
+            self.move_active = false;
+            self.move_grab = None;
+            self.rs_grab = None;
             return;
         };
         let aspect = (rect.width() / rect.height()).max(0.01);
         let nav =
             ctx.input(|i| i.modifiers.alt || i.pointer.secondary_down() || i.pointer.middle_down());
-        if nav {
-            self.move_active = false;
-            self.move_grab = None;
-            return;
-        }
         let pos = ctx.input(|i| {
             i.pointer
                 .hover_pos()
@@ -377,6 +383,7 @@ impl EditorApp {
         let Some(p) = pos else {
             self.move_active = false;
             self.move_grab = None;
+            self.rs_grab = None;
             return;
         };
         let q = p - rect.min;
@@ -385,29 +392,87 @@ impl EditorApp {
         let grid = EditorGrid {
             step: if self.snap { self.grid_step } else { 0.0 },
         };
-
         let pressed = ctx.input(|i| i.pointer.primary_pressed());
         let down = ctx.input(|i| i.pointer.primary_down());
-        let Some(cur) = self.edit_xz(ent) else {
-            return;
-        };
-        if pressed && !self.move_active {
-            // Begin drag: capture the grab offset so the actor doesn't jump.
-            let off = ground_grab_offset(&self.camera, nx, ny, aspect, &grid, [cur[0], cur[2]])
-                .unwrap_or([0.0, 0.0]);
-            self.move_grab = Some((off, ent));
-            self.move_active = true;
-        }
-        if self.move_active && down {
-            if let Some((off, _)) = self.move_grab {
-                if let Some(m) = move_actor_on_ground(&self.camera, nx, ny, aspect, &grid, off) {
-                    self.set_edit_xz(ent, m[0], cur[1], m[2]);
+
+        match self.tool {
+            EditorTool::Select => {
+                self.move_active = false;
+                self.move_grab = None;
+                self.rs_grab = None;
+            }
+            EditorTool::Move => {
+                if nav {
+                    self.move_active = false;
+                    self.move_grab = None;
+                    return;
+                }
+                let Some(cur) = self.edit_xz(ent) else {
+                    return;
+                };
+                if pressed && !self.move_active {
+                    let off =
+                        ground_grab_offset(&self.camera, nx, ny, aspect, &grid, [cur[0], cur[2]])
+                            .unwrap_or([0.0, 0.0]);
+                    self.move_grab = Some((off, ent));
+                    self.move_active = true;
+                }
+                if self.move_active && down {
+                    if let Some((off, _)) = self.move_grab {
+                        if let Some(m) =
+                            move_actor_on_ground(&self.camera, nx, ny, aspect, &grid, off)
+                        {
+                            self.set_edit_xz(ent, m[0], cur[1], m[2]);
+                        }
+                    }
+                }
+                if !down {
+                    self.move_active = false;
+                    self.move_grab = None;
+                }
+            }
+            EditorTool::Rotate | EditorTool::Scale => {
+                if nav {
+                    self.rs_grab = None;
+                    return;
+                }
+                if pressed && self.rs_grab.is_none() {
+                    if let Some(orig) = self.edit_transform(ent) {
+                        self.rs_grab = Some((nx, orig, ent));
+                    }
+                }
+                if self.rs_grab.is_some() && down {
+                    if let Some((sx, orig, e)) = self.rs_grab {
+                        let k = nx - sx;
+                        let nt = match self.tool {
+                            EditorTool::Rotate => rotate_yaw(orig, drag_to_yaw(k, 2.0)),
+                            EditorTool::Scale => scale_uniform(orig, drag_to_scale(k, 0.5)),
+                            _ => orig,
+                        };
+                        self.set_edit_transform(e, nt);
+                    }
+                }
+                if !down {
+                    self.rs_grab = None;
                 }
             }
         }
-        if !down {
-            self.move_active = false;
-            self.move_grab = None;
+    }
+
+    /// Current full Transform of an edit-world entity, else `None`.
+    fn edit_transform(&self, ent: u32) -> Option<Transform> {
+        self.state
+            .edit_world
+            .get_transforms()?
+            .get(ent as usize)
+            .copied()
+    }
+
+    /// Replace an edit-world entity's full Transform (host plumbing).
+    fn set_edit_transform(&mut self, ent: u32, t: Transform) {
+        let i = ent as usize;
+        if i < self.state.edit_world.entity_count() {
+            self.state.edit_world.set_transform(i, t);
         }
     }
 
@@ -606,6 +671,12 @@ impl EditorApp {
             if ctx.input(|i| i.key_pressed(egui::Key::W)) {
                 self.tool = EditorTool::Move;
             }
+            if ctx.input(|i| i.key_pressed(egui::Key::E)) {
+                self.tool = EditorTool::Rotate;
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::R)) {
+                self.tool = EditorTool::Scale;
+            }
             if ctx.input(|i| i.key_pressed(egui::Key::Delete)) {
                 if let Some(&i) = self.selection.selected.first() {
                     self.delete_actor(i as usize);
@@ -649,9 +720,11 @@ impl EditorApp {
             ui.horizontal(|ui| {
                 ui.label(format!("Mode: {:?}", self.state.mode));
                 if self.state.mode == EditorMode::Edit {
-                    // Unreal-like transform tools (Q=Select, W=Move).
+                    // Unreal-like transform tools (Q=Select, W=Move, E=Rotate, R=Scale).
                     let sel = self.tool == EditorTool::Select;
                     let mov = self.tool == EditorTool::Move;
+                    let rot = self.tool == EditorTool::Rotate;
+                    let scl = self.tool == EditorTool::Scale;
                     if ui
                         .selectable_label(sel, "Q ▸ Select")
                         .on_hover_text("Select (Q)")
@@ -665,6 +738,20 @@ impl EditorApp {
                         .clicked()
                     {
                         self.tool = EditorTool::Move;
+                    }
+                    if ui
+                        .selectable_label(rot, "E ⟳ Rotate")
+                        .on_hover_text("Rotate about Y (E) — drag horizontally")
+                        .clicked()
+                    {
+                        self.tool = EditorTool::Rotate;
+                    }
+                    if ui
+                        .selectable_label(scl, "R ⤢ Scale")
+                        .on_hover_text("Uniform scale (R) — drag horizontally")
+                        .clicked()
+                    {
+                        self.tool = EditorTool::Scale;
                     }
                     if self.tool == EditorTool::Move {
                         ui.checkbox(&mut self.snap, "Snap");

@@ -25,8 +25,10 @@ left, an **inspector** (details) on the right, and a **toolbar** on top.
 | Pan | **middle-drag** |
 | Zoom | **scroll wheel** |
 | Select actor | click it in the viewport or in the Hierarchy |
-| Move tool | **W** (then drag the selected actor on the ground) |
 | Select tool | **Q** |
+| Move tool | **W** (then drag the selected actor on the ground) |
+| Rotate tool | **E** (drag horizontally to yaw about Y) |
+| Scale tool | **R** (drag horizontally for uniform scale) |
 | Snap toggle + grid step | Move-mode toolbar (Snap, grid N) |
 | Add actor | **+ Add Actor** (hierarchy) |
 | Delete actor | **Delete** (or 🗑) |
@@ -54,12 +56,12 @@ cargo run -p openengine-editor-shell
 7. Repack the edited scene: `bash scripts/package.sh demo scene.json`.
 
 ## What's implemented vs. next
-- Done (headless-verified where noted): select/pick, Move-on-ground + grid snap,
-  gizmo translate axis math + Rotate(yaw)/Scale math (all headless-tested),
-  Add/Delete/Duplicate (tested), Save/Load, Play-wasm, PIE (maximize viewport),
-  camera.
-- Next (windowed, validate then refine): the gizmo **rendered + drag UI**,
-  Rotate/Scale **drag UI**, a **visual grid** overlay, actor **rename/labels**,
-  look&feel pass.
+- Done (headless-verified where noted): select/pick; Move-on-ground + grid snap;
+  Rotate (E) and Scale (R) tools with drag (rotate_yaw/scale_uniform math
+  headless-tested); Add/Delete/Duplicate (tested); Rename (Name field, tested);
+  Save/Load; Play-wasm; PIE (maximize viewport); camera; status bar.
+- Next (windowed, validate then refine): an on-screen **transform gizmo** with
+  X/Y/Z handles (the current tools are axis-free drags), a **visual grid**
+  overlay, toolbar **icons**, look&feel pass.
 - The "feel familiar to a UE user" bar is a UX judgement only you can make on a
   real display; use the checklist above and report what doesn't feel right.
