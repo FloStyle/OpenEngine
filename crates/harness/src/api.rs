@@ -92,7 +92,7 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
             "status": "ok",
             "version": VERSION,
             "headless": true,
-            "capabilities": ["observe", "spawn", "despawn", "set", "tick", "hash", "load_wasm", "prove", "transaction", "save", "load", "verify"],
+            "capabilities": ["observe", "spawn", "despawn", "set", "tick", "hash", "load_wasm", "prove", "transaction", "save", "load", "verify", "reload_logic"],
         })),
         ("GET", "/spec") => ok(json!({
             "service": "openengine-harness",
@@ -312,6 +312,27 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
             }
         }
         ("GET", "/verify") | ("POST", "/verify") => ok(verify()),
+        ("POST", "/reload_logic") => {
+            let path = {
+                let v: Value = match serde_json::from_slice(body) {
+                    Ok(x) => x,
+                    Err(_) => json!({}),
+                };
+                v.get("path")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("crates/core/assets/logic.wasm")
+                    .to_string()
+            };
+            // Rebuild the pure logic module, then re-instantiate the guest.
+            let (built, msg) = run_cmd("bash", &["scripts/build.sh"]);
+            if !built {
+                return err(500, format!("rebuild failed: {msg}"));
+            }
+            match state.load_wasm(&path) {
+                Ok(()) => ok(json!({ "ok": true, "engine": "wasm", "path": path })),
+                Err(e) => err(500, e),
+            }
+        }
         _ => err(404, format!("no route: {method} {path}")),
     }
 }
