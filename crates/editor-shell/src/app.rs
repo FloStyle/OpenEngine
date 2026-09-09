@@ -60,6 +60,9 @@ pub struct EditorApp {
     pub snap: bool,
     /// (grab XZ offset, entity index) captured when a Move drag begins.
     pub move_grab: Option<([f32; 2], u32)>,
+    /// Unreal "Play-in-Editor": when playing, hide side panels so the viewport
+    /// fills the window.
+    pub pie_mode: bool,
 }
 
 /// Unreal-like editor transform tools.
@@ -191,6 +194,7 @@ impl EditorApp {
             grid_step: 0.5,
             snap: true,
             move_grab: None,
+            pie_mode: false,
         };
         // Default framing so the spawned spheres (x in 0..25) are visible.
         app.camera.focus = glam::Vec3::new(12.5, 0.0, 0.0);
@@ -586,14 +590,26 @@ impl EditorApp {
         self.handle_nav(ctx);
         self.handle_edit_drag(ctx);
         self.toolbar(ctx);
-        self.hierarchy(ctx);
-        self.inspector(ctx);
+        // Unreal Play-in-Editor: while playing in PIE mode the viewport fills the
+        // window (side panels hidden). Tools still need editing panels when not.
+        let in_pie = self.pie_mode && self.state.mode == EditorMode::Playing;
+        if !in_pie {
+            self.hierarchy(ctx);
+            self.inspector(ctx);
+        }
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| {
                 let rect = ui.available_rect_before_wrap();
                 self.viewport_rect = Some(rect);
-                ui.label(egui::RichText::new("3D viewport (lit scene)").weak());
+                ui.label(
+                    egui::RichText::new(if in_pie {
+                        "PLAY (PIE)"
+                    } else {
+                        "3D viewport (lit scene)"
+                    })
+                    .weak(),
+                );
             });
     }
 
@@ -634,6 +650,15 @@ impl EditorApp {
                     }
                 } else if ui.button("⏹ Stop").clicked() {
                     self.state.stop();
+                }
+                // Play-in-Editor toggle: viewport fills while playing.
+                let pie = self.pie_mode;
+                if ui
+                    .selectable_label(pie, "⛶ PIE")
+                    .on_hover_text("Maximize the viewport while playing")
+                    .clicked()
+                {
+                    self.pie_mode = !self.pie_mode;
                 }
                 ui.separator();
                 // Engine indicator: whether Play runs the guest wasm or fallback.

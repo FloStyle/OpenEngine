@@ -31,6 +31,7 @@ left, an **inspector** (details) on the right, and a **toolbar** on top.
 | Duplicate actor | **Ctrl+D** |
 | Play / Stop | toolbar ▶ Play / ⏹ Stop (wasm engine) |
 | Save / Load scene | **💾 Save / 📂 Load** (shared ecs scene codec) |
+| Play-in-Editor (maximize viewport while playing) | **⛶ PIE** toolbar toggle |
 | Frame scene | **F** |
 
 ## Try-it checklist (validate on your display)
@@ -50,10 +51,12 @@ cargo run -p openengine-editor-shell
 7. Repack the edited scene: `bash scripts/package.sh demo scene.json`.
 
 ## What's implemented vs. next
-- Done (headless-verified where noted): select/pick, Move-on-ground + grid snap
-  (math tested), Add/Delete/Duplicate (tested), Save/Load, Play-wasm, camera.
-- Next (windowed, validate then refine): a visible **transform gizmo with
-  X/Y/Z handles**, **Rotate/Scale** tools, a **visual grid** overlay, PIE-style
-  maximized game view, actor **rename/labels**.
+- Done (headless-verified where noted): select/pick, Move-on-ground + grid snap,
+  gizmo translate axis math + Rotate(yaw)/Scale math (all headless-tested),
+  Add/Delete/Duplicate (tested), Save/Load, Play-wasm, PIE (maximize viewport),
+  camera.
+- Next (windowed, validate then refine): the gizmo **rendered + drag UI**,
+  Rotate/Scale **drag UI**, a **visual grid** overlay, actor **rename/labels**,
+  look&feel pass.
 - The "feel familiar to a UE user" bar is a UX judgement only you can make on a
   real display; use the checklist above and report what doesn't feel right.
