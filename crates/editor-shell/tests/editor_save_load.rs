@@ -124,3 +124,18 @@ fn editor_duplicate_actor() {
         "duplicate should be offset from the original, got {dup_x} vs {orig_x}"
     );
 }
+
+#[test]
+fn editor_rename_actor() {
+    let mut a = EditorApp::new();
+    assert_eq!(a.label_for(0), "Player");
+    assert_eq!(a.label_for(7), "Actor_7");
+    a.set_actor_name(7, "Chest".to_string());
+    assert_eq!(a.label_for(7), "Chest");
+    a.set_actor_name(7, "   ".to_string());
+    assert_eq!(
+        a.label_for(7),
+        "Actor_7",
+        "blank name clears the custom label"
+    );
+}

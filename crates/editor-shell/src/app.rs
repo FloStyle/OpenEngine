@@ -9,6 +9,7 @@
 //! timestep for determinism. If the `logic.wasm` module is unavailable it falls
 //! back to a lightweight native placeholder so the shell never crashes.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
@@ -63,6 +64,11 @@ pub struct EditorApp {
     /// Unreal "Play-in-Editor": when playing, hide side panels so the viewport
     /// fills the window.
     pub pie_mode: bool,
+    /// Author-facing actor names (session; Unreal-like outliner labels).
+    pub entity_names: HashMap<u32, String>,
+    /// Text buffer + tracked id for the rename field in the inspector.
+    pub rename_buf: String,
+    pub rename_target: Option<u32>,
 }
 
 /// Unreal-like editor transform tools.
@@ -195,6 +201,9 @@ impl EditorApp {
             snap: true,
             move_grab: None,
             pie_mode: false,
+            entity_names: HashMap::new(),
+            rename_buf: String::new(),
+            rename_target: None,
         };
         // Default framing so the spawned spheres (x in 0..25) are visible.
         app.camera.focus = glam::Vec3::new(12.5, 0.0, 0.0);
@@ -431,6 +440,27 @@ impl EditorApp {
             nt
         };
         self.state.edit_world.set_transform(i, nt);
+    }
+
+    /// Author-facing label for an actor (its custom name or a default).
+    pub fn label_for(&self, id: u32) -> String {
+        self.entity_names.get(&id).cloned().unwrap_or_else(|| {
+            if id == 0 {
+                "Player".into()
+            } else {
+                format!("Actor_{id}")
+            }
+        })
+    }
+
+    /// Set or clear an actor's custom name.
+    pub fn set_actor_name(&mut self, id: u32, name: String) {
+        let t = name.trim().to_string();
+        if t.is_empty() {
+            self.entity_names.remove(&id);
+        } else {
+            self.entity_names.insert(id, t);
+        }
     }
 
     /// Spawn a new default actor into the edit world and select it. Returns its
@@ -781,7 +811,7 @@ impl EditorApp {
                 let entity_count = self.state.active_world().entity_count();
                 for i in 0..entity_count {
                     let id = i as u32;
-                    let name = if i == 0 { "Player" } else { "NPC" };
+                    let name = self.label_for(id);
                     let selected = self.selection.selected.contains(&id);
                     if ui
                         .selectable_label(selected, format!("{name} (entity {id})"))
@@ -816,6 +846,18 @@ impl EditorApp {
                     ui.label("Editing is locked while playing.");
                     return;
                 }
+                // Actor name (rename, Unreal-like) — in-session label.
+                if self.rename_target != Some(id) {
+                    self.rename_target = Some(id);
+                    self.rename_buf = self.label_for(id);
+                }
+                ui.horizontal(|ui| {
+                    ui.label("Name");
+                    if ui.text_edit_singleline(&mut self.rename_buf).changed() {
+                        self.set_actor_name(id, self.rename_buf.clone());
+                    }
+                });
+                ui.separator();
                 let world = &self.state.edit_world;
                 let Some(transforms) = world.get_transforms() else {
                     ui.label("no transforms");

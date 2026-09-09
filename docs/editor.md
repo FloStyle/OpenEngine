@@ -31,6 +31,7 @@ left, an **inspector** (details) on the right, and a **toolbar** on top.
 | Add actor | **+ Add Actor** (hierarchy) |
 | Delete actor | **Delete** (or 🗑) |
 | Duplicate actor | **Ctrl+D** |
+| Rename actor | select it → Inspector **Name** field |
 | Play / Stop | toolbar ▶ Play / ⏹ Stop (wasm engine) |
 | Save / Load scene | **💾 Save / 📂 Load** (shared ecs scene codec) |
 | Play-in-Editor (maximize viewport while playing) | **⛶ PIE** toolbar toggle |
