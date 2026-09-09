@@ -822,3 +822,150 @@ mod physics_tests {
         assert_eq!(b, c);
     }
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// § AABB (XZ) contact resolution — deterministic pair separation.
+//
+// Pure fixed-point: two axis-aligned squares overlap test, and a deterministic
+// push-out that moves the *second* box just far enough along the smallest
+// penetration axis (X preferred on a tie). Pair order and iteration order are
+// fixed, so results are bit-reproducible.
+// ────────────────────────────────────────────────────────────────────────────
+
+/// True if the XZ boxes around `a`/`b` (half-extent `half` in X and Z) overlap.
+pub fn aabb_overlaps_xz(a: &[I16F16; 3], b: &[I16F16; 3], half: [I16F16; 3]) -> bool {
+    for i in 0..2 {
+        // b.min < a.max && a.min < b.max on axis i (i=0 -> x, i=1 -> z).
+        if !(b[i] + half[i] > a[i] - half[i] && a[i] + half[i] > b[i] - half[i]) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Move `b` just outside `a` along the smallest penetration axis (X on a tie).
+/// Returns true if a correction was applied.
+pub fn separate_xz(a: &[I16F16; 3], b: &mut [I16F16; 3], half: [I16F16; 3]) -> bool {
+    if !aabb_overlaps_xz(a, b, half) {
+        return false;
+    }
+    let h = half;
+    let dx = b[0] - a[0];
+    let dz = b[2] - a[2];
+    // Penetration depths (>= 0 when overlapping).
+    let px = h[0] + h[0] - if dx < I16F16::from_num(0) { -dx } else { dx };
+    let pz = h[1] + h[1] - if dz < I16F16::from_num(0) { -dz } else { dz };
+    // Push along the smaller penetration; prefer X on a tie for determinism.
+    let use_x = pz >= px;
+    if use_x {
+        let s = if dx < I16F16::from_num(0) {
+            I16F16::from_num(-1)
+        } else {
+            I16F16::from_num(1)
+        };
+        b[0] = a[0] + s * (h[0] + h[0]);
+    } else {
+        let s = if dz < I16F16::from_num(0) {
+            I16F16::from_num(-1)
+        } else {
+            I16F16::from_num(1)
+        };
+        b[2] = a[2] + s * (h[1] + h[1]);
+    }
+    true
+}
+
+/// Greedily resolve all XZ overlaps among `positions` (pair order i<j, repeated
+/// passes until no overlap or `max_passes`). Returns the number of corrections.
+pub fn resolve_all_xz(positions: &mut [[I16F16; 3]], half: [I16F16; 3], max_passes: u32) -> u32 {
+    let mut corrections = 0u32;
+    for _ in 0..max_passes {
+        let mut changed = false;
+        for i in 0..positions.len() {
+            for j in i + 1..positions.len() {
+                let a = positions[i];
+                if separate_xz(&a, &mut positions[j], half) {
+                    corrections += 1;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    corrections
+}
+
+#[cfg(test)]
+mod physics_aabb_tests {
+    use super::*;
+
+    fn p(x: i32, y: i32, z: i32) -> [I16F16; 3] {
+        [
+            I16F16::from_num(x),
+            I16F16::from_num(y),
+            I16F16::from_num(z),
+        ]
+    }
+
+    #[test]
+    fn overlap_detection() {
+        let h = [
+            I16F16::from_num(1),
+            I16F16::from_num(1),
+            I16F16::from_num(1),
+        ];
+        assert!(aabb_overlaps_xz(&p(0, 0, 0), &p(1, 0, 0), h));
+        assert!(!aabb_overlaps_xz(&p(0, 0, 0), &p(5, 0, 0), h));
+    }
+
+    #[test]
+    fn separation_pushes_out() {
+        let h = [
+            I16F16::from_num(1),
+            I16F16::from_num(1),
+            I16F16::from_num(1),
+        ];
+        let a = p(0, 0, 0);
+        let mut b = p(1, 0, 0);
+        assert!(separate_xz(&a, &mut b, h));
+        assert!(
+            !aabb_overlaps_xz(&a, &b, h),
+            "after separation boxes must not overlap"
+        );
+    }
+
+    #[test]
+    fn resolve_all_separates_a_pair() {
+        let h = [
+            I16F16::from_num(1),
+            I16F16::from_num(1),
+            I16F16::from_num(1),
+        ];
+        let mut s = vec![p(0, 0, 0), p(1, 0, 0)];
+        resolve_all_xz(&mut s, h, 8);
+        assert!(
+            !aabb_overlaps_xz(&s[0], &s[1], h),
+            "greedy resolve must clear a pair"
+        );
+    }
+
+    #[test]
+    fn resolve_all_is_deterministic() {
+        let h = [
+            I16F16::from_num(1),
+            I16F16::from_num(1),
+            I16F16::from_num(1),
+        ];
+        let seed = vec![p(0, 0, 0), p(1, 0, 0), p(0, 0, 1), p(2, 0, 2)];
+        let run = |positions: &mut Vec<[I16F16; 3]>| -> (Vec<[I16F16; 3]>, u32) {
+            let c = resolve_all_xz(positions, h, 8);
+            (positions.clone(), c)
+        };
+        let (s1, c1) = run(&mut seed.clone());
+        let (s2, c2) = run(&mut seed.clone());
+        assert_eq!(s1, s2, "resolution must be deterministic");
+        assert_eq!(c1, c2);
+    }
+}
