@@ -74,6 +74,26 @@ FRAMES=600 FORWARD=200 dist/demo/run.sh                 # scripted: player walks
 `dist/<game>/` is self-contained: `openengine-game` + `logic.wasm` + `scene.json`
 + `run.sh`. Copy that folder anywhere and run it.
 
+## 6b. Deterministic physics games (ADR-0003)
+OpenEngine ships a deterministic Domain-B physics system (gravity + floor + AABB
+XZ), runnable natively, via wasm, and packaged:
+
+```bash
+# play a physics scene headless (no wasm needed)
+cargo run -p openengine-harness --bin openengine-runner -- \
+  --scene examples/demo-physics.json --physics --frames 400
+
+# drive it over the live core
+curl -s -X POST http://127.0.0.1:8080/physics \
+  -H 'Content-Type: application/json' -d '{"n":400,"half":[1,1,1],"gravity":-0.05,"floor":0}'
+
+# package a physics game
+bash scripts/package.sh phys examples/demo-physics.json physics   # → dist/phys/
+dist/phys/run.sh
+```
+The physics also runs in the wasm guest (`openengine_physics_tick`) and is proven
+bit-identical to native. All physics is fixed-point, `[PURE]`, and `/prove`-able.
+
 ## The AI loop (longer term, per ADR-0002 / specs 51–52)
 An agent/AI works in the engine's own language: `observe` → `propose` (deltas /
 Rust) → `verify` (determinism/purity/build) → `apply` or rollback. The headless
