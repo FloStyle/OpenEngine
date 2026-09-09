@@ -51,11 +51,12 @@ OpenEngine can also call a model itself through `crates/ai` (the uniform
 ```
 
 Then configure the engine (a `ProviderConfig::Local` config), and any code path
-uses `ModelAdapter::from_config` to get a llama.cpp client:
+uses `ModelAdapter::from_config` to get a llama.cpp client (`key_env` optional —
+only for a local server that requires auth):
 
 ```json
 {
-  "provider": { "kind": "local", "endpoint": "http://127.0.0.1:8080/v1" },
+  "provider": { "kind": "local", "endpoint": "http://127.0.0.1:8080/v1", "key_env": "UNSLOTH_API_KEY" },
   "model": "model.gguf"
 }
 ```
@@ -71,6 +72,51 @@ For a cloud key the config is `ApiKey` (key read from an env var, never inline):
 
 `from_config` maps `ApiKey` → a DeepSeek client and `Local` → a llama.cpp
 client, so the assistant code never branches on provider.
+
+### Configure your key and test it
+
+Config resolution order: `--config <path>` > `$OPENENGINE_AI_CONFIG` >
+`./config/ai.json`. Keys are **never** in the file (env only). Copy
+`config/ai.example.json` (DeepSeek) or `config/ai-local.example.json`
+(unsloth/llama.cpp) to `config/ai.json` and set the key env:
+
+```bash
+export DEEPSEEK_API_KEY=sk-...            # for an ApiKey config
+# or for a Local server that needs auth (unsloth):
+export UNSLOTH_API_KEY=sk-...
+# or the local server needs no key:
+#   config/ai-local.example.json without key_env
+
+# Ping it — the key+model test:
+cargo run -p openengine-ai -- test --config config/ai.json
+# one-turn chat:
+cargo run -p openengine-ai -- chat --config config/ai.json "say hi"
+# catalog:
+cargo run -p openengine-ai -- models
+```
+
+> The built-in DeepSeek example expects `DEEPSEEK_API_KEY`; the committed
+> `config/ai-local.example.json` targets a local unsloth at
+> `127.0.0.1:8889/v1` reading `UNSLOTH_API_KEY`.
+
+### Vision — make a model see the live scene
+
+Build the harness with capture and give a **vision-capable** model eyes:
+
+```bash
+# GPU machine: run the harness with the capture feature
+cargo run -p openengine-harness --features capture -- --port 8090 &
+openengine-ai see --config <vision-config> --harness http://127.0.0.1:8090 \
+  "describe the actors on the ground"
+# or raw:
+curl -s http://127.0.0.1:8090/ai/status     # configured? model? vision?
+curl -s http://127.0.0.1:8090/frame          # {png_base64,mime,width,height}
+```
+
+A local **text-only** model (e.g. KAT-Coder) cannot see — `see` refuses with a
+typed error. Load a VLM (llama.cpp with `mmproj`) or use a vision API key for
+image turns. Live vision runs via `scripts/ai-vision-test.sh`
+(`OPENENGINE_AI_LIVE=1`).
 
 ## Agent loop (what a spawned agent does)
 

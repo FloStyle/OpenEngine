@@ -65,6 +65,15 @@ handles, toolbar icons, fine look&feel) — needs your display to validate.
   gains `GET /schema` (spec-21 registry); skills split into
   `openengine-dev/verify/reload`; `docs/spawn-agent.md` (DSH/Pi/llama.cpp).
   (107 → 110 tests.)
+- **AI-connected (model+vision, `feat/ai-config-vision`):** config resolution
+  (`--config > $OPENENGINE_AI_CONFIG > ./config/ai.json`), model catalog +
+  multimodal `ContentPart` (OpenAI-vision JSON, unit-tested), `openengine-ai`
+  CLI (`describe/providers/models/test/chat/see`), `ProviderConfig::Local`
+  optional `key_env`, headless `crates/capture` (offscreen PNG of a World) →
+  harness `GET /frame` + `GET /ai/status` (capture feature, default off),
+  vision skill + gated live-test scripts. LIVE vs user unsloth
+  (127.0.0.1:8889): `test` → PASS. `/frame` → real 640×480 PNG.
+  `config/ai.json` gitignored; examples committed. (→ ~124 tests.)
 
 
 ## Important Notes
