@@ -4,6 +4,10 @@ description = "OpenEngine harness core: headless JSON-over-HTTP door for live-st
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+# Two binaries live here (the HTTP server + the headless runner). Pick the
+# server by default so `cargo run -p openengine-harness -- --port 8080` works
+# exactly as every skill/doc recipe writes it.
+default-run = "openengine-harness"
 license.workspace = true
 
 [[bin]]
