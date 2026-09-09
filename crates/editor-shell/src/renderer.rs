@@ -125,6 +125,8 @@ pub struct SceneRenderer {
     object_bind: wgpu::BindGroup,
     /// How many 256B object slots `object_buffer` currently holds.
     object_slots: u32,
+    /// Whether to draw the optional visual ground grid (off by default).
+    show_grid: bool,
 }
 
 impl SceneRenderer {
@@ -137,7 +139,8 @@ impl SceneRenderer {
             label: Some("frame.bgl"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                // Used by both VS (view_proj) and FS (grid flag).
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -161,11 +164,11 @@ impl SceneRenderer {
                 count: None,
             }],
         });
-        // Frame = mat4 (64B), single static slot. Object uniforms use a separate
-        // growable dynamic-offset buffer allocated in `ensure_object_slots`.
+        // Frame = mat4 (64B) + grid vec4 (16B) = 80B, static slot. Object uniforms
+        // use a separate growable dynamic-offset buffer in `ensure_object_slots`.
         let frame_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("frame.ub"),
-            size: 64,
+            size: 80,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -286,7 +289,13 @@ impl SceneRenderer {
             frame_bind,
             object_bind,
             object_slots: 1,
+            show_grid: false,
         }
+    }
+
+    /// Toggle the optional visual ground grid.
+    pub fn set_show_grid(&mut self, on: bool) {
+        self.show_grid = on;
     }
 
     /// (Re)size the dynamic-offset object buffer to hold at least `needed`
@@ -370,11 +379,10 @@ impl SceneRenderer {
         }
         queue.write_buffer(&self.object_buffer, 0, &staging);
 
-        queue.write_buffer(
-            &self.frame_buffer,
-            0,
-            bytemuck::cast_slice(&camera.view_proj(aspect).to_cols_array()),
-        );
+        let mut frame = [0.0f32; 20];
+        frame[..16].copy_from_slice(&camera.view_proj(aspect).to_cols_array());
+        frame[16] = if self.show_grid { 1.0 } else { 0.0 };
+        queue.write_buffer(&self.frame_buffer, 0, bytemuck::cast_slice(&frame));
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("viewport"),

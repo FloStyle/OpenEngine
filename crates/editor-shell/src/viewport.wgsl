@@ -10,6 +10,7 @@
 
 struct Frame {
     view_proj: mat4x4<f32>,
+    grid: vec4<f32>,   // x = show visual grid (0/1); rest unused
 };
 @group(0) @binding(0)
 var<uniform> frame: Frame;
@@ -31,6 +32,9 @@ const DIFFUSE: f32 = 0.85;
 const CELL: f32 = 1.0;
 const SHADE_A: vec3<f32> = vec3<f32>(0.30, 0.32, 0.36);
 const SHADE_B: vec3<f32> = vec3<f32>(0.72, 0.74, 0.78);
+// Optional visual grid: spacing + a near-neutral highlight line color.
+const GRID_SPACE: f32 = 2.0;
+const GRID_COLOR: vec3<f32> = vec3<f32>(0.10, 0.11, 0.13);
 
 struct VsIn {
     @location(0) position: vec3<f32>,
@@ -60,6 +64,16 @@ fn checker(v: vec2<f32>) -> f32 {
     return fract(c * 0.5) * 2.0; // 0 or 1 pattern
 }
 
+// 1 near a world XZ grid line, 0 between lines.
+fn grid_weight(v: vec2<f32>) -> f32 {
+    let d = vec2<f32>(v.x / GRID_SPACE, v.y / GRID_SPACE);
+    // distance to the nearest integer line (0 on a line, 0.5 between).
+    let fx = abs(fract(d.x) - 0.5) * 2.0;
+    let fz = abs(fract(d.y) - 0.5) * 2.0;
+    let w = max(1.0 - fx, 1.0 - fz); // 1 on a line
+    return smoothstep(0.6, 1.0, w);
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let n = normalize(in.normal);
@@ -70,6 +84,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if object.mode == GROUND_MODE {
         let c = checker(in.world.xz);
         base = mix(SHADE_A, SHADE_B, c);
+        // Optional visual grid overlay (off by default; editor toggles it).
+        if frame.grid.x > 0.5 {
+            let g = grid_weight(in.world.xz);
+            base = mix(base, GRID_COLOR, g);
+        }
     }
     return vec4<f32>(base * light, 1.0);
 }

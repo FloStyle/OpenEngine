@@ -67,6 +67,8 @@ pub struct EditorApp {
     /// Unreal "Play-in-Editor": when playing, hide side panels so the viewport
     /// fills the window.
     pub pie_mode: bool,
+    /// Draw the optional visual ground grid.
+    pub show_grid: bool,
     /// Author-facing actor names (session; Unreal-like outliner labels).
     pub entity_names: HashMap<u32, String>,
     /// Text buffer + tracked id for the rename field in the inspector.
@@ -207,6 +209,7 @@ impl EditorApp {
             move_grab: None,
             rs_grab: None,
             pie_mode: false,
+            show_grid: false,
             entity_names: HashMap::new(),
             rename_buf: String::new(),
             rename_target: None,
@@ -778,6 +781,7 @@ impl EditorApp {
                 {
                     self.pie_mode = !self.pie_mode;
                 }
+                ui.checkbox(&mut self.show_grid, "Grid");
                 ui.separator();
                 // Engine indicator: whether Play runs the guest wasm or fallback.
                 if self.state.mode == EditorMode::Playing {

@@ -244,6 +244,7 @@ impl Shell {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
         if let Some(rect) = app.viewport_rect {
+            scene.set_show_grid(app.show_grid);
             let aspect = (rect.width() / rect.height().max(1.0)).max(0.01);
             let world = app.state.active_world();
             scene.draw(

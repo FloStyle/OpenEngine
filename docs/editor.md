@@ -37,6 +37,7 @@ left, an **inspector** (details) on the right, and a **toolbar** on top.
 | Play / Stop | toolbar ▶ Play / ⏹ Stop (wasm engine) |
 | Save / Load scene | **💾 Save / 📂 Load** (shared ecs scene codec) |
 | Play-in-Editor (maximize viewport while playing) | **⛶ PIE** toolbar toggle |
+| Visual ground grid | **Grid** toolbar checkbox (off by default) |
 | Frame scene | **F** |
 
 ## Try-it checklist (validate on your display)
