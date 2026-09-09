@@ -34,7 +34,7 @@ green) and, for interactive parts, validated on the user's display:
 | 1 | Consolidate & verify existing (suite verte, docs vraies) | ✅ 81 tests green, clippy/fmt/purity OK |
 | 2 | UE-familiar editor: gizmo/Rotate/Scale math, Rotate/Scale drag (E/R), PIE, status bar, rename, visual grid | ✅ built (math headless-tested; windowed validated on screen) |
 | 3 | Plugin foundation: `Plugin` trait + `PluginHost` + ADR-0005 + tool-as-plugin + `/reload_logic` | ✅ |
-| 4 | AI seams: `/verify` verdict + `crates/ai` model-adapter contract (no impl) | ✅ |
+| 4 | AI seams: `/verify` verdict + `crates/ai` model adapter — concrete clients now shipped (`ModelAdapter::from_config`: DeepSeek API-key + local llama.cpp) | ✅ |
 | 5 | ADRs: physics (0003), asset/mesh (0004) | ✅ |
 | 6 | Docs upkeep (continuous: every change updates its spec/doc) | ongoing |
 
@@ -60,6 +60,11 @@ handles, toolbar icons, fine look&feel) — needs your display to validate.
   - package: `scripts/package.sh` → runnable `dist/<game>/`;
   - proof: `full_pipeline` test authors `examples/demo-chase.json` → runs it →
     the guest chaser moves toward the player → two runs bit-identical.
+- **AI-ready gaps (A/D/E/G, `feat/ai-ready-gaps` → `main`)**: `crates/ai` ships
+  concrete clients (`from_config`: DeepSeek API-key, local llama.cpp); harness
+  gains `GET /schema` (spec-21 registry); skills split into
+  `openengine-dev/verify/reload`; `docs/spawn-agent.md` (DSH/Pi/llama.cpp).
+  (107 → 110 tests.)
 
 
 ## Important Notes
