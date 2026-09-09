@@ -8,3 +8,8 @@ license.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+openengine-editor = { path = "../editor" }
+openengine-contracts = { workspace = true }
+openengine-math = { workspace = true }
