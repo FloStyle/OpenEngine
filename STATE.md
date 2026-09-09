@@ -74,6 +74,14 @@ handles, toolbar icons, fine look&feel) — needs your display to validate.
   vision skill + gated live-test scripts. LIVE vs user unsloth
   (127.0.0.1:8889): `test` → PASS. `/frame` → real 640×480 PNG.
   `config/ai.json` gitignored; examples committed. (→ ~124 tests.)
+- **AI discovery + end-to-end VISION (`feat/ai-config-vision`, live)**: CLI
+  `list` (discover `/v1/models`), `check <model>` (vision probe), `load <model>`
+  (unsloth inference); image gate relaxed so a Local VLM works even when
+  `is_vision` metadata is false. **LIVE**: loaded `unsloth/Qwen3.6-35B-A3B-MTP`
+  on the unsloth server (multimodal despite `is_vision=false`), and full
+  `openengine-ai see` round-trip described the live /frame:
+  *"A red hemisphere and a blue hemisphere rest on the grey and white checkered
+  floor."* → real PNG in `docs/img/frame-demo.png`. (→ 123 tests.)
 
 
 ## Important Notes
