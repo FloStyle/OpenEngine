@@ -37,6 +37,8 @@ governance lives in [`AGENTS.md`](AGENTS.md) and `.agents/`.
 
 - **Agents:** read [`AGENTS.md`](AGENTS.md) — it is the constitution.
 - **Humans:** see [`docs/specs/architecture.md`](docs/specs/architecture.md).
+- **Run the editor:** `bash scripts/editor.sh` (double-click friendly; see
+  [`docs/editor.md`](docs/editor.md)).
 - The ABI lives in [`contracts/src/lib.rs`](contracts/src/lib.rs) (`ARCH_VERSION`).
 
 ## Status

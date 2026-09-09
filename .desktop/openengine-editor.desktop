@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=OpenEngine Editor
+Comment=Launch the OpenEngine interactive editor
+# %k = this file's path (<repo>/.desktop/openengine-editor.desktop).
+# Repo root = two levels up from it. Install to ~/.local/share/applications/.
+Exec=bash -c 'cd "$(dirname "$(dirname "%k")")" && bash scripts/editor.sh; echo; read -p "Press Enter to close…"'
+Terminal=true
+Categories=Development;Graphics;

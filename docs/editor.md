@@ -40,6 +40,19 @@ left, an **inspector** (details) on the right, and a **toolbar** on top.
 | Visual ground grid | **Grid** toolbar checkbox (off by default) |
 | Frame scene | **F** |
 
+## Launch it (double-click friendly)
+```bash
+# One-click launcher (builds if needed, opens the editor window):
+bash scripts/editor.sh
+# force a release build / auto-play a scene:
+bash scripts/editor.sh --release
+bash scripts/editor.sh --play examples/demo-chase.json
+```
+On Linux you can double-click `scripts/editor.sh` (or install
+`.desktop/openengine-editor.desktop` into `~/.local/share/applications/` for a
+file-manager launcher). The editor needs a graphical session (Vulkan/GPU); on a
+headless box the script prints a friendly message instead.
+
 ## Try-it checklist (validate on your display)
 ```bash
 cargo run -p openengine-editor-shell
