@@ -969,3 +969,141 @@ mod physics_aabb_tests {
         assert_eq!(c1, c2);
     }
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// § Composed deterministic physics step (ADR-0003).
+//
+// One `physics_step` integrates velocity into Transform position, applies
+// gravity + floor to Y (the vertical axis), then resolves XZ AABB overlaps.
+// All fixed-point, no f32, no randomness — bit-reproducible. This is the pure
+// Domain-B physics a game/agent can drive deterministically.
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Advance a set of rigid bodies one tick: integrate, gravity+floor on Y, then
+/// greedily separate XZ AABB overlaps.
+pub fn physics_step(
+    t: &mut [Transform],
+    v: &mut [Velocity3D],
+    half: [I16F16; 3],
+    gravity: I16F16,
+    floor: i32,
+) {
+    let n = t.len().min(v.len());
+    let floor_f = I16F16::from_num(floor);
+    for i in 0..n {
+        let mut pos = t[i].position;
+        let mut vel = v[i].linear;
+        // Integrate velocity into position (units/tick).
+        for ax in 0..3 {
+            pos[ax] += vel[ax];
+        }
+        // Gravity only while above the floor; then floor resolve on Y.
+        if pos[1] > floor_f {
+            vel[1] += gravity;
+        }
+        let (ny, nvy, _) = floor_resolve(pos[1], vel[1], floor);
+        pos[1] = ny;
+        vel[1] = nvy;
+        t[i].position = pos;
+        v[i] = Velocity3D { linear: vel };
+    }
+    // Greedy XZ AABB separation (deterministic i<j order, several passes).
+    for _ in 0..8 {
+        let mut changed = false;
+        for i in 0..n {
+            for j in i + 1..n {
+                let a = t[i].position;
+                if separate_xz(&a, &mut t[j].position, half) {
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
+#[cfg(test)]
+mod physics_step_tests {
+    use super::*;
+
+    fn tx(x: i32, y: i32, z: i32) -> Transform {
+        Transform::at(
+            I16F16::from_num(x),
+            I16F16::from_num(y),
+            I16F16::from_num(z),
+        )
+    }
+    fn vel() -> Velocity3D {
+        Velocity3D::zero()
+    }
+
+    #[test]
+    fn bodies_settle_on_floor_without_overlap() {
+        let half = [
+            I16F16::from_num(1),
+            I16F16::from_num(1),
+            I16F16::from_num(1),
+        ];
+        let gravity = I16F16::from_num(-2);
+        // Two bodies overlapping on X, dropped from y=10.
+        let mut t = vec![tx(0, 10, 0), tx(1, 10, 0)];
+        let mut v = vec![vel(), vel()];
+        for _ in 0..60 {
+            physics_step(&mut t, &mut v, half, gravity, 0);
+        }
+        // Both rest exactly on the floor.
+        assert_eq!(t[0].position[1].to_num::<i32>(), 0);
+        assert_eq!(t[1].position[1].to_num::<i32>(), 0);
+        // And they no longer overlap in XZ.
+        assert!(!aabb_overlaps_xz(&t[0].position, &t[1].position, half));
+        assert!(
+            t[0].position[0] != t[1].position[0],
+            "must be separated in X"
+        );
+    }
+
+    #[test]
+    fn step_is_deterministic_3x() {
+        let half = [
+            I16F16::from_num(1),
+            I16F16::from_num(1),
+            I16F16::from_num(1),
+        ];
+        let gravity = I16F16::from_num(-2);
+        let run = || -> (Vec<[i32; 3]>, Vec<[i32; 3]>) {
+            let mut t = vec![tx(0, 10, 0), tx(1, 10, 0), tx(0, 10, 1)];
+            let mut v = vec![vel(), vel(), vel()];
+            for _ in 0..60 {
+                physics_step(&mut t, &mut v, half, gravity, 0);
+            }
+            let p: Vec<[i32; 3]> = t
+                .iter()
+                .map(|x| {
+                    [
+                        x.position[0].to_num(),
+                        x.position[1].to_num(),
+                        x.position[2].to_num(),
+                    ]
+                })
+                .collect();
+            let vl: Vec<[i32; 3]> = v
+                .iter()
+                .map(|x| {
+                    [
+                        x.linear[0].to_num(),
+                        x.linear[1].to_num(),
+                        x.linear[2].to_num(),
+                    ]
+                })
+                .collect();
+            (p, vl)
+        };
+        let a = run();
+        let b = run();
+        let c = run();
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+    }
+}
