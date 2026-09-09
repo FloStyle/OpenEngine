@@ -147,6 +147,9 @@ fn can_attempt_image(cfg: &ModelConfig) -> bool {
 }
 
 fn main() -> ExitCode {
+    // Load a gitignored workspace .env so keys are available without exporting
+    // each shell (real env vars always win over the file).
+    let _ = openengine_ai::load_dotenv();
     let a = match parse() {
         Ok(a) => a,
         Err(e) => {

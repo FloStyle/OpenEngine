@@ -22,8 +22,12 @@ pub mod content;
 /// Resolved `ModelConfig` loading + catalog helpers.
 pub mod config;
 
+/// Minimal gitignored `.env` loader (no external dependency).
+pub mod env;
+
 pub use config::{resolve_config, ConfigSource};
 pub use content::{ChatTurn, ContentPart, TextImageContent};
+pub use env::load_dotenv;
 
 /// Where + which model to talk to. `kind` discriminates a remote API key from a
 /// local OpenAI-compatible endpoint (llama.cpp / unsloth / vLLM ...).
