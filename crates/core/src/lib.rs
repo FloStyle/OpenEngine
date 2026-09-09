@@ -88,6 +88,9 @@ pub mod wasm_move_host;
 /// Wasm 3D gameplay host — Phase E (ADR-0001 gameplay bridge).
 pub mod wasm_gameplay_host;
 
+/// Wasm physics host — Domain-B physics in the guest (ADR-0003).
+pub mod wasm_physics_host;
+
 /// Mesh assets (ADR-0004) + procedural generators, used by the host renderer.
 mod mesh;
 

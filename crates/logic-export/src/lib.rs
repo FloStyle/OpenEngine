@@ -272,3 +272,67 @@ fn read_column<T: bytemuck::Pod>(
     }
     out
 }
+
+/// Run one Domain-B physics tick in the guest (`physics_delta`).
+///
+/// Input layout: `[gravity i32 LE][floor i32][halfX i32][halfY i32][halfZ i32]`
+/// (20 bytes) + `[postcard columns][Transform | Velocity3D arena]`. Returns the
+/// encoded WorldDelta length.
+///
+/// # Safety
+/// Bounded guest memory regions as in the gameplay export; transport only.
+#[no_mangle]
+pub unsafe extern "C" fn openengine_physics_tick(
+    input_ptr: u32,
+    input_len: u32,
+    out_ptr: u32,
+    out_cap: u32,
+) -> u32 {
+    const HEADER: usize = 20;
+    let input_bytes: &[u8] =
+        unsafe { core::slice::from_raw_parts(input_ptr as *const u8, input_len as usize) };
+    if input_bytes.len() < HEADER {
+        return 0;
+    }
+    let r32 = |i: usize| -> i32 { i32::from_le_bytes(input_bytes[i..i + 4].try_into().unwrap()) };
+    let gravity = openengine_math::I16F16::from_bits(r32(0));
+    let floor = r32(4);
+    let half = [
+        openengine_math::I16F16::from_bits(r32(8)),
+        openengine_math::I16F16::from_bits(r32(12)),
+        openengine_math::I16F16::from_bits(r32(16)),
+    ];
+    let params = openengine_logic_sandbox::PhysicsParams {
+        gravity,
+        floor,
+        half,
+    };
+    let (columns, arena) =
+        match postcard::take_from_bytes::<Vec<ColumnDescriptor>>(&input_bytes[HEADER..]) {
+            Ok(v) => v,
+            Err(_) => return 0,
+        };
+    let transforms: Vec<Transform> = read_column(&columns, arena, comp::TRANSFORM);
+    let velocities: Vec<Velocity3D> = read_column(&columns, arena, comp::VELOCITY3D);
+    let n = transforms.len().min(velocities.len());
+    let delta = match openengine_logic_sandbox::physics_delta(
+        &transforms[..n],
+        &velocities[..n],
+        &params,
+    ) {
+        Ok(d) => d,
+        Err(_) => return 0,
+    };
+    let bytes = match openengine_contracts::encode_delta(&delta) {
+        Ok(b) => b,
+        Err(_) => return 0,
+    };
+    if bytes.len() > out_cap as usize || bytes.is_empty() {
+        return 0;
+    }
+    // SAFETY: out_ptr..out_ptr+n is a writable guest buffer of out_cap bytes.
+    unsafe {
+        core::ptr::copy_nonoverlapping(bytes.as_ptr(), out_ptr as *mut u8, bytes.len());
+    }
+    bytes.len() as u32
+}
