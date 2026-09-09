@@ -31,15 +31,16 @@ green) and, for interactive parts, validated on the user's display:
 
 | Phase | Work | status |
 |---|---|---|
-| 1 | Consolidate & verify existing (suite verte, docs vraies) | ✅ 66 tests green, clippy/fmt/purity OK |
-| 2 | UE-familiar editor completion: gizmo X/Y/Z, Rotate/Scale, visual grid, PIE, rename, look&feel | in progress (math headless + UI build-verified + docs/editor.md checklist; no visual claim) |
-| 3 | Plugin foundation: `Plugin` trait + `ServiceRegistry` + lifecycle; migrate gizmo to a plugin; `/reload_logic`; ADR dylib (doc only) | todo |
-| 4 | AI seams: `/verify` (build+tests+purity verdict); model-adapter interface (no impl) | todo |
-| 5 | ADRs: physics choice, asset/mesh pipeline (decide, don't implement) | todo |
+| 1 | Consolidate & verify existing (suite verte, docs vraies) | ✅ 81 tests green, clippy/fmt/purity OK |
+| 2 | UE-familiar editor: gizmo/Rotate/Scale math, Rotate/Scale drag (E/R), PIE, status bar, rename, visual grid | ✅ built (math headless-tested; windowed validated on screen) |
+| 3 | Plugin foundation: `Plugin` trait + `PluginHost` + ADR-0005 + tool-as-plugin + `/reload_logic` | ✅ |
+| 4 | AI seams: `/verify` verdict + `crates/ai` model-adapter contract (no impl) | ✅ |
+| 5 | ADRs: physics (0003), asset/mesh (0004) | ✅ |
 | 6 | Docs upkeep (continuous: every change updates its spec/doc) | ongoing |
 
-Also on `main`: hot-reload of `logic.wasm` (spec 10), swappable logic module,
-gizmo/plugin migration, asset pipeline — tracked as follow-ups.
+Remaining Phase-2 polish is purely visual/on-screen (rendering X/Y/Z gizmo
+handles, toolbar icons, fine look&feel) — needs your display to validate.
+
 
 
 ## Completed (headless-verified unless noted)
