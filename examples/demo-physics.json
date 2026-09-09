@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "tick": 0,
+  "entities": [
+    {"transform":[0,10,0],"scale":[1,1,1],"color":[255,80,80,255],"velocity":[0,0,0],"actor_kind":1,"actor_seed":0,"grounded":1,"jump_cd":0,"move_speed":1,"jump_force":1},
+    {"transform":[1,10,0],"scale":[1,1,1],"color":[80,180,255,255],"velocity":[0,0,0],"actor_kind":1,"actor_seed":1,"grounded":1,"jump_cd":0,"move_speed":1,"jump_force":1},
+    {"transform":[-3,10,0],"scale":[1,1,1],"color":[120,255,120,255],"velocity":[0,0,0],"actor_kind":1,"actor_seed":2,"grounded":1,"jump_cd":0,"move_speed":1,"jump_force":1}
+  ]
+}
