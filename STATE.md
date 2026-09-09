@@ -27,18 +27,20 @@ green) and, for interactive parts, validated on the user's display:
    `WorldDelta` to the play world. Native placeholder only as a fallback if the
    module is absent. Guest == native proven bit-for-bit (`gameplay_wasm_determinism`).
 
-## Active work
+## Active work — "Complete the repo" program (6 phases)
 
-| area | status |
-|------|--------|
-| Headless pipeline (start / develop+test / edit-save / player-run / package) | ✅ merged on `main` (see Completed) |
-| Windowed player / render the packaged game | todo (needs your display) |
-| Wire editor-shell to open/edit a real saved scene file (not the hardcoded demo) | todo (windowed) |
-| Hot-reload of `logic.wasm` (spec 10) | todo |
-| Swappable 2nd demo logic module (prove engine is logic-agnostic) | todo |
-| Editor: gizmo translate / drag-select (spec 09/31) | todo |
-| Asset pipeline (Phase 5): textures/meshes/cache | todo |
-| STATE.md / ROADMAP kept current | ongoing |
+| Phase | Work | status |
+|---|---|---|
+| 1 | Consolidate & verify existing (suite verte, docs vraies) | ✅ 66 tests green, clippy/fmt/purity OK |
+| 2 | UE-familiar editor completion: gizmo X/Y/Z, Rotate/Scale, visual grid, PIE, rename, look&feel | in progress (math headless + UI build-verified + docs/editor.md checklist; no visual claim) |
+| 3 | Plugin foundation: `Plugin` trait + `ServiceRegistry` + lifecycle; migrate gizmo to a plugin; `/reload_logic`; ADR dylib (doc only) | todo |
+| 4 | AI seams: `/verify` (build+tests+purity verdict); model-adapter interface (no impl) | todo |
+| 5 | ADRs: physics choice, asset/mesh pipeline (decide, don't implement) | todo |
+| 6 | Docs upkeep (continuous: every change updates its spec/doc) | ongoing |
+
+Also on `main`: hot-reload of `logic.wasm` (spec 10), swappable logic module,
+gizmo/plugin migration, asset pipeline — tracked as follow-ups.
+
 
 ## Completed (headless-verified unless noted)
 
