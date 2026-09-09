@@ -197,7 +197,7 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
             "status": "ok",
             "version": VERSION,
             "headless": true,
-            "capabilities": ["observe", "spawn", "despawn", "set", "tick", "physics", "hash", "load_wasm", "prove", "transaction", "save", "load", "verify", "reload_logic", "snapshot", "restore", "schema"],
+            "capabilities": ["observe", "spawn", "despawn", "set", "tick", "physics", "hash", "load_wasm", "prove", "transaction", "save", "load", "verify", "reload_logic", "snapshot", "restore", "schema", "ask"],
         })),
         ("GET", "/spec") => ok(json!({
             "service": "openengine-harness",
@@ -220,7 +220,8 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
                 {"method":"GET","path":"/verify","desc":"run repo build+tests+purity, return structured PASS/FAIL"},
                 {"method":"GET","path":"/snapshot","desc":"return full in-memory state (all columns + tick)"},
                 {"method":"POST","path":"/restore","body":"{\"snapshot\":{...}}","desc":"replace the world from a snapshot"},
-                {"method":"GET","path":"/schema","desc":"spec-21 component registry (id/name/size/fields)"}
+                {"method":"GET","path":"/schema","desc":"spec-21 component registry (id/name/size/fields)"},
+                {"method":"POST","path":"/ask","body":"{\"message\":\"...\",\"propose\":true}","desc":"resident-operator: call the configured model (optionally apply its proposal batch)"}
             ]
         })),
         ("GET", "/hash") => {
@@ -498,6 +499,8 @@ pub fn dispatch(state: &mut HarnessState, method: &str, path: &str, body: &[u8])
         }
         // ── AI status: config read only, zero network. ──
         ("GET", "/ai/status") | ("POST", "/ai/status") => ok(ai_status()),
+        // ── Resident operator: /ask calls the configured model (spec 51/52). ──
+        ("POST", "/ask") => ask(state, body),
         // ── Vision: offscreen screenshot of the live world (capture feature). ──
         ("GET", "/frame") | ("GET", "/screenshot") => crate::api::frame(state, path),
         _ => err(404, format!("no route: {method} {path}")),
@@ -523,6 +526,99 @@ fn ai_status() -> Value {
         Err(_) => {
             json!({ "configured": false, "error": "no AI config. set OPENENGINE_AI_CONFIG or ./config/ai.json" })
         }
+    }
+}
+
+/// `/ask`: resident-operator chat (spec 51/52). Calls the configured model with
+/// an observe context; when `propose:true` the model is asked to reply with a
+/// typed [`ProposeBatch`] which the engine parses and applies atomically
+/// (reversible) via the single mutation channel.
+fn ask(state: &mut HarnessState, body: &[u8]) -> (u16, Value) {
+    // Resolve the model config (env wins; no network here).
+    let (cfg, _src) = match openengine_ai::config::resolve_config(None) {
+        Ok(x) => x,
+        Err(_) => {
+            return err(
+                409,
+                "no model configured. set OPENENGINE_AI_CONFIG or create config/ai.json (see config/ai*.example.json).",
+            )
+        }
+    };
+    let v: Value = match serde_json::from_slice(body) {
+        Ok(x) => x,
+        Err(e) => return err(400, format!("bad json: {e}")),
+    };
+    let message = v
+        .get("message")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let system = v.get("system").and_then(|x| x.as_str()).map(str::to_string);
+    let propose = v.get("propose").and_then(|x| x.as_bool()).unwrap_or(false);
+
+    // Build the observe context (entities) to ground the model.
+    let (entities, _tick) = state.observe(50);
+    let summaries: Vec<openengine_ai::EntitySummary> = entities
+        .into_iter()
+        .map(|e| openengine_ai::EntitySummary {
+            index: e.index,
+            transform: e.transform,
+            color: e.color,
+        })
+        .collect();
+    let observe = openengine_ai::observe_context(state.entity_count(), &summaries);
+
+    let instruction = if propose {
+        "You are the OpenEngine resident operator. Observe the world, then reply \
+         with ONLY a JSON proposal batch of ops to carry out the user's request \
+         (spawn/set/despawn). Do not add prose outside the JSON."
+            .to_string()
+    } else {
+        "You are the OpenEngine resident assistant. Answer concisely using the world state."
+            .to_string()
+    };
+    let system_prompt = match &system {
+        Some(s) => format!("{observe}\n\n{instruction}\n\n{s}"),
+        None => format!("{observe}\n\n{instruction}"),
+    };
+
+    // Build + call the model.
+    let adapter = match openengine_ai::providers::from_config(&cfg) {
+        Ok(a) => a,
+        Err(e) => return err(500, format!("model init: {e}")),
+    };
+    let turns = vec![
+        openengine_ai::ChatTurn::text("system", &system_prompt),
+        openengine_ai::ChatTurn::text("user", &message),
+    ];
+    let reply = match adapter.complete(&turns) {
+        Ok(r) => r,
+        Err(e) => return err(502, format!("model call failed: {e}")),
+    };
+
+    if !propose {
+        return ok(json!({ "reply": reply, "model": cfg.model, "applied": false }));
+    }
+    // Propose mode: parse the model's reply as typed ops and apply atomically.
+    match openengine_ai::parse_proposal(&reply) {
+        Ok(batch) => match state.apply_proposal(&batch) {
+            Ok(n) => ok(json!({
+                "reply": reply,
+                "model": cfg.model,
+                "applied": true,
+                "ops_applied": n,
+                "entity_count": state.entity_count(),
+            })),
+            Err(e) => err(422, format!("proposal apply failed: {e}")),
+        },
+        Err(e) => err(
+            422,
+            json!({
+                "error": format!("model reply was not a valid proposal: {e}"),
+                "model": cfg.model,
+                "reply": reply,
+            }),
+        ),
     }
 }
 

@@ -9,6 +9,11 @@ use openengine_harness::{bind, serve, HarnessState};
 use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::sync::Mutex;
+
+// Tests that mutate the process-global OPENENGINE_AI_CONFIG env var must not run
+// in parallel with each other (env is process-wide). Serialize them via a mutex.
+static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
 const WASM_ASSET: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/assets/logic.wasm");
 
@@ -376,6 +381,7 @@ fn ai_status_never_network_and_config_aware() {
 
 #[test]
 fn ai_status_reflects_config_when_env_set() {
+    let _guard = ENV_MUTEX.lock().unwrap();
     // Point OPENENGINE_AI_CONFIG at a temp Local config -> configured:true.
     let tmp = std::env::temp_dir().join("ai_status_cfg.json");
     std::fs::write(
@@ -409,4 +415,55 @@ fn frame_returns_typed_response_or_png() {
     } else {
         assert_eq!(c, 503, "/frame without GPU/capture -> 503, got {c}: {r}");
     }
+}
+
+#[test]
+fn ask_without_config_returns_409() {
+    let _guard = ENV_MUTEX.lock().unwrap();
+    // No OPENENGINE_AI_CONFIG + no config/ai.json -> typed 409, no network.
+    std::env::remove_var("OPENENGINE_AI_CONFIG");
+    let mut s = HarnessState::new();
+    let (c, r) = post(&mut s, "/ask", r#"{"message":"hello"}"#);
+    assert_eq!(c, 409, "no-model-config must 409, got {r}");
+    assert!(r["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains("no model configured"));
+}
+
+#[test]
+fn apply_proposal_spawns_and_rolls_back_on_failure() {
+    let mut s = HarnessState::new();
+    // A valid batch: spawn two + despawn the first -> net +1.
+    let ok_batch: openengine_ai::ProposeBatch = serde_json::from_str(
+        r#"{"ops":[
+            {"op":"spawn","transform":[1,0,0],"color":[255,0,0,255]},
+            {"op":"spawn","transform":[2,0,0],"color":[0,255,0,255]},
+            {"op":"despawn","entity":0}
+        ]}"#,
+    )
+    .unwrap();
+    let n = s.apply_proposal(&ok_batch).expect("batch applies");
+    assert_eq!(n, 3);
+    assert_eq!(s.entity_count(), 1);
+
+    // A failing batch (despawn out of range) must roll back to the pre-state.
+    let s0 = s.entity_count();
+    let bad_batch: openengine_ai::ProposeBatch = serde_json::from_str(
+        r#"{"ops":[{"op":"spawn","transform":[9,9,9],"color":[1,2,3,255]},{"op":"despawn","entity":99}]}"#,
+    )
+    .unwrap();
+    assert!(s.apply_proposal(&bad_batch).is_err());
+    assert_eq!(s.entity_count(), s0, "failed proposal must roll back");
+}
+
+#[test]
+fn parse_proposal_and_apply_roundtrip() {
+    // Model-shaped reply -> parse -> apply through the mutation channel.
+    let reply = r#"{"ops":[{"op":"spawn","transform":[0,0,0],"color":[9,9,9,255]}]}"#;
+    let mut s = HarnessState::new();
+    let batch = openengine_ai::parse_proposal(reply).expect("parse");
+    let n = s.apply_proposal(&batch).expect("apply");
+    assert_eq!(n, 1);
+    assert_eq!(s.entity_count(), 1);
 }

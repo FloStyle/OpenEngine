@@ -25,9 +25,13 @@ pub mod config;
 /// Minimal gitignored `.env` loader (no external dependency).
 pub mod env;
 
+/// Typed Operator seam (ADR-0002 / spec 51-52): propose a change in-engine.
+pub mod operator;
+
 pub use config::{resolve_config, ConfigSource};
 pub use content::{ChatTurn, ContentPart, TextImageContent};
 pub use env::load_dotenv;
+pub use operator::{observe_context, parse_proposal, EntitySummary, ProposeBatch, ProposeOp};
 
 /// Where + which model to talk to. `kind` discriminates a remote API key from a
 /// local OpenAI-compatible endpoint (llama.cpp / unsloth / vLLM ...).

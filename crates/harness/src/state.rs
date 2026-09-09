@@ -268,6 +268,40 @@ impl HarnessState {
         }
     }
 
+    /// Apply a typed operator [`ProposeBatch`] atomically (single mutation
+    /// channel, reversible): a checkpoint is taken first and any failing op
+    /// rolls the whole batch back. Returns the number of ops applied.
+    ///
+    /// This is the machine-side APPLY of the spec 51/52 operator loop — the
+    /// untrusted proposer (model/agent) submits ops; the engine applies them
+    /// only if they all succeed, else reverts to the prior state.
+    pub fn apply_proposal(&mut self, batch: &openengine_ai::ProposeBatch) -> Result<u32, String> {
+        let checkpoint = self.duplicate();
+        for (i, op) in batch.ops.iter().enumerate() {
+            let r = match op {
+                openengine_ai::ProposeOp::Spawn {
+                    transform,
+                    scale,
+                    color,
+                } => {
+                    let _ = self.spawn(*transform, *scale, *color);
+                    Ok(())
+                }
+                openengine_ai::ProposeOp::Set {
+                    entity,
+                    component,
+                    value,
+                } => self.set(*entity as usize, component, value),
+                openengine_ai::ProposeOp::Despawn { entity } => self.despawn(*entity as usize),
+            };
+            if let Err(e) = r {
+                self.overwrite_from(&checkpoint);
+                return Err(format!("op {i} failed ({e}); rolled back"));
+            }
+        }
+        Ok(batch.ops.len() as u32)
+    }
+
     /// Run `count` ticks. If a wasm guest is loaded it runs the real Domain B
     /// logic; otherwise the world is left unchanged (identity native integrator)
     /// and only the deterministic tick counter advances.

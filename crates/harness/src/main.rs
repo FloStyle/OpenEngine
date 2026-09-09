@@ -5,6 +5,9 @@ use std::env;
 use openengine_harness::{bind_free, serve, HarnessState};
 
 fn main() {
+    // Load a gitignored workspace .env so /ask keys resolve without exporting
+    // each shell (real env vars always win over the file).
+    let _ = openengine_ai::load_dotenv();
     let args: Vec<String> = env::args().collect();
     let mut prefer: u16 = 8080;
     let mut i = 1;
