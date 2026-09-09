@@ -344,10 +344,36 @@ impl EditorApp {
                 );
             }
         });
-        // F = frame scene (Edit mode convenience).
+        // F = frame the selection (or the whole scene if none is selected).
         if ctx.input(|i| i.key_pressed(egui::Key::F)) {
-            self.camera.focus = glam::Vec3::new(12.5, 0.5, 0.0);
-            self.camera.distance = 34.0;
+            self.frame_focus();
+        }
+    }
+
+    /// Point the camera at the selected actor, or frame the scene if none is
+    /// selected (Unreal: F frames the selection). Headless-testable.
+    pub fn frame_focus(&mut self) {
+        let focused = self.selection.selected.first().and_then(|&id| {
+            let w = self.state.active_world();
+            w.get_transforms()
+                .and_then(|t| t.get(id as usize))
+                .map(|t| {
+                    [
+                        t.position[0].to_num::<f32>(),
+                        t.position[1].to_num::<f32>(),
+                        t.position[2].to_num::<f32>(),
+                    ]
+                })
+        });
+        match focused {
+            Some(p) => {
+                self.camera.focus = glam::Vec3::new(p[0], p[1], p[2]);
+                self.camera.distance = self.camera.distance.min(20.0);
+            }
+            None => {
+                self.camera.focus = glam::Vec3::new(12.5, 0.5, 0.0);
+                self.camera.distance = 34.0;
+            }
         }
     }
 

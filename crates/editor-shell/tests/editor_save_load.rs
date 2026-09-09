@@ -139,3 +139,26 @@ fn editor_rename_actor() {
         "blank name clears the custom label"
     );
 }
+
+#[test]
+fn editor_frame_focus_tracks_selection() {
+    let mut a = EditorApp::new();
+    // Frame the scene (no selection) resets to the default framing.
+    a.frame_focus();
+    assert!(
+        (a.camera.focus.x - 12.5).abs() < 0.01,
+        "no selection -> scene frame"
+    );
+    // Select an entity at x=7.5 and frame it.
+    a.selection.selected = vec![3];
+    a.frame_focus();
+    assert!(
+        (a.camera.focus.x - 7.5).abs() < 0.01,
+        "F should frame the selected actor"
+    );
+    assert_eq!(a.camera.focus.y, 0.0);
+    assert!(
+        a.camera.distance <= 20.0,
+        "framing selection zooms reasonably close"
+    );
+}
