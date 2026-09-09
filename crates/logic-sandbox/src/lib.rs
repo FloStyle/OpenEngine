@@ -1107,3 +1107,123 @@ mod physics_step_tests {
         assert_eq!(b, c);
     }
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// § Physics as a pure system (WorldDelta, single mutation channel).
+// ────────────────────────────────────────────────────────────────────────────
+
+/// A versioned description of the physics integrator params.
+pub struct PhysicsParams {
+    pub gravity: I16F16,
+    pub floor: i32,
+    pub half: [I16F16; 3],
+}
+
+fn pack_rows<T: bytemuck::Pod>(rows: &[T]) -> alloc::vec::Vec<u8> {
+    let mut out = alloc::vec![0u8; core::mem::size_of_val(rows)];
+    let mut i = 0usize;
+    for r in rows {
+        let b = bytemuck::bytes_of(r);
+        out[i..i + b.len()].copy_from_slice(b);
+        i += b.len();
+    }
+    out
+}
+
+/// Run `physics_step` over copies and return the batched [`WorldDelta`] on the
+/// TRANSFORM and VELOCITY3D columns — the pure Domain-B physics system that the
+/// engine (host / agent) applies through the single mutation channel.
+pub fn physics_delta(
+    transforms: &[Transform],
+    velocities: &[Velocity3D],
+    p: &PhysicsParams,
+) -> Result<WorldDelta, RecoverableError> {
+    let n = core::cmp::min(transforms.len(), velocities.len());
+    let mut t = transforms[..n].to_vec();
+    let mut v = velocities[..n].to_vec();
+    physics_step(&mut t, &mut v, p.half, p.gravity, p.floor);
+
+    let indices: alloc::vec::Vec<u32> = (0..n as u32).collect();
+    let mut delta = WorldDelta::default();
+    delta.writes.push(ColumnWrite {
+        archetype: ArchetypeId(0),
+        component: ComponentId(comp::TRANSFORM),
+        indices: indices.clone(),
+        payload: pack_rows(&t),
+    });
+    delta.writes.push(ColumnWrite {
+        archetype: ArchetypeId(0),
+        component: ComponentId(comp::VELOCITY3D),
+        indices,
+        payload: pack_rows(&v),
+    });
+    Ok(delta)
+}
+
+#[cfg(test)]
+mod physics_delta_tests {
+    use super::*;
+
+    fn tx(x: i32, y: i32, z: i32) -> Transform {
+        Transform::at(
+            I16F16::from_num(x),
+            I16F16::from_num(y),
+            I16F16::from_num(z),
+        )
+    }
+
+    #[test]
+    fn delta_advances_and_is_deterministic() {
+        let params = PhysicsParams {
+            gravity: I16F16::from_num(-2),
+            floor: 0,
+            half: [I16F16::from_num(1); 3],
+        };
+        let run = || {
+            let mut t = vec![tx(0, 10, 0), tx(1, 10, 0)];
+            let mut v = vec![Velocity3D::zero(); 2];
+            for _ in 0..60 {
+                let d = physics_delta(&t, &v, &params).unwrap();
+                // Apply the delta (single mutation channel) and reflect it.
+                let nt = read_transform_col(&d);
+                let nv = read_velocity_col(&d);
+                t = nt;
+                v = nv;
+            }
+            let ys: Vec<i32> = t.iter().map(|x| x.position[1].to_num()).collect();
+            let xs: Vec<i32> = t.iter().map(|x| x.position[0].to_num()).collect();
+            (xs, ys)
+        };
+        let a = run();
+        let b = run();
+        let c = run();
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+        assert_eq!(a.1, vec![0, 0], "both bodies rest on the floor");
+        assert_ne!(a.0[0], a.0[1], "bodies are separated in X");
+    }
+}
+
+// Decode helpers mirroring gameplay_tests.
+#[cfg(test)]
+fn read_transform_col(d: &WorldDelta) -> alloc::vec::Vec<Transform> {
+    let w = d
+        .writes
+        .iter()
+        .find(|w| w.component.0 == comp::TRANSFORM)
+        .unwrap();
+    (0..(w.payload.len() / core::mem::size_of::<Transform>()))
+        .map(|i| bytemuck::pod_read_unaligned(&w.payload[i * 40..i * 40 + 40]))
+        .collect()
+}
+#[cfg(test)]
+fn read_velocity_col(d: &WorldDelta) -> alloc::vec::Vec<Velocity3D> {
+    let w = d
+        .writes
+        .iter()
+        .find(|w| w.component.0 == comp::VELOCITY3D)
+        .unwrap();
+    (0..(w.payload.len() / core::mem::size_of::<Velocity3D>()))
+        .map(|i| bytemuck::pod_read_unaligned(&w.payload[i * 12..i * 12 + 12]))
+        .collect()
+}
