@@ -18,6 +18,7 @@
 | `crates/editor-shell` | egui editor over wgpu — layout UE-like; tools Q/W, Move+drag/snap, Add/Delete/Duplicate, Save/Load, `--play` | `24-editor-viewport`, `25-editor-shell`, `docs/editor.md` |
 | `crates/harness` | Headless live-state surface for agents/AI: HTTP server (`/prove` `/transaction` `/save` `/load` `/verify`) + `openengine-runner` (headless player) | `51`, `52`, `16`, `50`, `ADR-0001/0002` |
 | `examples/` | Authored demo scenes (e.g. `demo-chase.json`) | `50-build-deploy` |
+| `crates/ai` | Uniform model-adapter CONTRACT (types + trait; API key or local llama.cpp/unsloth). Interface only, no client. | `52-ai-developer-surface`, `ADR-0002` |
 | `scripts/` | `build.sh` (logic.wasm), `package.sh` (cook a game → `dist/`), `harness.sh` (API) | `50-build-deploy` |
 
 ## Domains & the rule that keeps you safe

@@ -34,6 +34,8 @@ members = [
     # Domain A — harness core. Headless JSON-over-HTTP door for live-state
     # observe/mutate/verify (agent + human). No GPU/winit/wgpu.
     "crates/harness",
+    # Domain A — uniform model-adapter CONTRACT (interface only). Optional.
+    "crates/ai",
 ]
 # Deliberately NO wildcard member globs: onboarding a crate is an intentional
 # act that requires its Cargo.toml + lib.rs + lint review to exist first.
