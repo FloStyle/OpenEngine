@@ -13,12 +13,14 @@
 
 pub mod camera;
 pub mod commands;
+pub mod gizmo;
 pub mod grid;
 pub mod selection;
 pub mod state;
 pub mod translate;
 
 pub use commands::{Command, ModifyTransformCommand, UndoRedoManager};
+pub use gizmo::{axis_coord, camera_forward, screen_plane_point};
 pub use grid::{ground_point_snapped, snap_pos, EditorGrid};
 pub use selection::{pick, SelectionModel};
 pub use state::{EditorMode, EditorState};
