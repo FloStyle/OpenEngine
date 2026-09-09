@@ -121,6 +121,20 @@ breaks the other loudly.
   - `OPENENGINE_ASSETS_PATH` (default `./assets/`)
   - `OPENENGINE_WASM_PATH` (default `./assets/logic.wasm`)
 
+### Secrets rule (`.env` + gitignore)
+
+- Model/API keys are **never** committed and **never** in repo files that get
+  tracked. A gitignored `.env` at the workspace root is the local convenience
+  (loaded at startup by `openengine-ai`, env vars always win); `.env.example`
+  is the committed placeholder template.
+- Agents must **never read, print, diff, or copy `.env` contents**. Keys are
+  consumed only via env vars at runtime (`ProviderConfig::key_env`).
+- Real `.env` and any `.env.*` (except `.env.example`) are gitignored and
+  excluded from agent ripgrep via `.rgignore`.
+- Guard: run `bash scripts/check-secrets.sh` (also a CI job) before finishing —
+  it fails if any tracked path matches `.env`, or if a present `.env` is not
+  ignored. `scripts/package.sh` refuses to stage `.env` into `dist/`.
+
 ---
 
 ## 6. Testing Protocol

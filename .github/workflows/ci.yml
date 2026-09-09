@@ -60,3 +60,11 @@ jobs:
         run: python brain/orchestrator.py verify-deps
       - name: (stub) verify Wasm purity when a logic artifact exists
         run: python brain/orchestrator.py verify || echo "no wasm artifact yet — stub OK"
+
+  # Guard: no .env / secrets may ever be tracked or shipped.
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No tracked .env / secrets
+        run: bash scripts/check-secrets.sh

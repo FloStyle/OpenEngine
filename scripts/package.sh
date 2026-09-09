@@ -36,6 +36,13 @@ echo "==> package: build release runner"
 cargo build --release -p openengine-harness --bin openengine-runner 2>&1 | tail -1
 
 mkdir -p "$out"
+
+# Guard: a distributable must never carry local secrets (.env or real configs).
+if ls "$out" >/dev/null 2>&1 && find "$out" -name '.env' -o -name '.env.*' 2>/dev/null | grep -v '\.example$' | grep -q .; then
+  echo "SECRETS: refusing to package a .env into dist/ — remove it first." >&2
+  exit 3
+fi
+
 # Stage the runnable: binary + scene + launcher (logic.wasm only in logic mode).
 cp target/release/openengine-runner "$out/openengine-game"
 cp "$scene" "$out/scene.json"
