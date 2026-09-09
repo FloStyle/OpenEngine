@@ -36,6 +36,7 @@ bash scripts/harness.sh health
 | POST | `/restore` | `{"snapshot":{…}}` restore bit-for-bit |
 | POST | `/verify` | structured PASS/FAIL gate (build+tests+purity+determinism) |
 | POST | `/reload_logic` | rebuild wasm + re-instantiate guest in place |
+| POST | `/ask` | resident-operator: call the configured model (chat, or `propose:true` to parse+apply a typed ops batch) |
 
 ## Basic recipe
 

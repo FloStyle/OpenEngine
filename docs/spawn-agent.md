@@ -148,6 +148,34 @@ curl -s http://127.0.0.1:8080/verify | jq '.status'
 curl -s -X POST http://127.0.0.1:8080/prove -d '{"n":100}' | jq '.equal'
 ```
 
+## Resident operator: `/ask` (the model proposes, the engine applies)
+
+The harness can call the configured model **server-side** and apply a typed
+proposal — this is the first step of the ADR-0002 "resident operator" loop
+without a human orchestrating each curl:
+
+```bash
+# chat: the model answers with the observe context as its system prompt
+curl -s -X POST http://127.0.0.1:8080/ask -H 'Content-Type: application/json' \
+  -d '{"message":"how many entities are there?"}'
+
+# propose: the model replies with a JSON proposal batch which the engine
+# parses and applies atomically (single mutation channel, reversible rollback)
+curl -s -X POST http://127.0.0.1:8080/ask -H 'Content-Type: application/json' \
+  -d '{"message":"Add a blue entity at [1,0,0]","propose":true}'
+# → {"applied":true,"ops_applied":1,"entity_count":1,"model":"..."}
+```
+
+- Requires a configured model: `OPENENGINE_AI_CONFIG` or `config/ai.json`
+  (key via `.env`). Without one, `/ask` returns `409 {"error":"no model configured"}`.
+- `propose:true` expects the model to reply with ONLY a JSON batch, e.g.
+  `{"ops":[{"op":"spawn","transform":[1,0,0],"color":[0,0,255,255]}]}`. A reply
+  that is not a valid proposal returns a typed `422` (never applied). A failing
+  op rolls the whole batch back.
+- The proposal ops are: `spawn` (transform/scale/color), `set`
+  (entity/component/value), `despawn` (entity).
+- Live loop: `bash scripts/ai-ask-test.sh` (`OPENENGINE_AI_LIVE=1`).
+
 ## Guarantees an agent can rely on
 
 - Determinism: equal inputs ⇒ bit-identical `World::hash()`; `/prove` is the

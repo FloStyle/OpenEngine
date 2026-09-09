@@ -88,6 +88,17 @@ handles, toolbar icons, fine look&feel) — needs your display to validate.
   Guards: `scripts/check-secrets.sh` (a CI job) fails on any tracked `.env`;
   `scripts/package.sh` refuses to ship one into `dist/`; AGENTS.md secrets rule.
   (`openengine-ai` CLI + config resolution read keys via env or `.env`.)
+- **Resident-operator `/ask` (spec 51/52, `feat/ask-operator`)**:
+  `crates/ai/operator.rs` typed Operator seam (`ProposeOp` Spawn/Set/Despawn +
+  `ProposeBatch` + `parse_proposal` validate + `observe_context`, 6 tests);
+  harness `POST /ask` calls the configured model server-side (config/`.env`),
+  chat mode returns the reply, `propose:true` parses the model's typed ops batch
+  and applies atomically via `HarnessState::apply_proposal` (single mutation
+  channel, checkpoint rollback on any failing op); `409` when no model
+  configured; harness server loads `.env` at startup. Headless tests: /ask 409,
+  apply_proposal spawn+rollback, parse->apply roundtrip. LIVE vs unsloth:
+  chat → `PONG`; propose → the model spawned a blue entity at [1,0,0]
+  (`applied:true, ops_applied:1`). `scripts/ai-ask-test.sh` (gated).
 
 
 ## Important Notes
