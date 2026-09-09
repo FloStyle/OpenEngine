@@ -1,0 +1,10 @@
+[package]
+name = "openengine-plugin-host"
+description = "OpenEngine plugin boundary (Phase 3): Plugin trait + PluginHost lifecycle. In-process now; dylib reload transport is designed (ADR-0005), not implemented."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true

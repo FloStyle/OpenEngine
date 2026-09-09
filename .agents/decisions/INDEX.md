@@ -11,6 +11,7 @@ updated: "2026-09-03"
 | ADR-0002 | AI-native, all-in-one game engine (resident assistant, no side chatbot) | Proposed | 2026-09-04 |
 | ADR-0003 | Physics: deterministic home-grown in Domain B; Rapier optional Domain-A preview | Proposed | 2026-09-04 |
 | ADR-0004 | Asset & mesh pipeline: internal MeshAsset + AssetRef; host loads, Domain B pure | Proposed | 2026-09-04 |
+| ADR-0005 | Plugin boundary: in-process Plugin trait now; ServiceRegistry typed; dylib reload later | Proposed | 2026-09-04 |
 
 ADRs live in `.agents/decisions/`. A new ADR is required for any contract layout
 change, any new unsafe carve-out in Domain A, or any platform-specific code.
