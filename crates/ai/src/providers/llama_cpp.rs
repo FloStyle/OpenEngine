@@ -30,13 +30,20 @@ impl ModelAdapter for LlamaCppAdapter {
     }
 
     fn complete(&self, turns: &[ChatTurn]) -> Result<String, AdapterError> {
-        let endpoint = match &self.config.provider {
-            crate::ProviderConfig::Local { endpoint } => endpoint,
+        let (endpoint, key_env) = match &self.config.provider {
+            crate::ProviderConfig::Local { endpoint, key_env } => (endpoint, key_env.as_deref()),
             crate::ProviderConfig::ApiKey { .. } => {
                 unreachable!("llama.cpp requires Local")
             }
         };
-        // Local servers need no auth token.
-        openai::chat(endpoint, None, &self.config.model, turns)
+        // Some local servers (e.g. unsloth) still require a bearer key.
+        let bearer = match key_env {
+            Some(env) => Some(
+                std::env::var(env)
+                    .map_err(|_| AdapterError::Config(format!("env '{env}' unset")))?,
+            ),
+            None => None,
+        };
+        openai::chat(endpoint, bearer.as_deref(), &self.config.model, turns)
     }
 }

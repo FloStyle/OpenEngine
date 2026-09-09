@@ -37,3 +37,6 @@ crates/core/assets/logic.wasm
 
 # --- Cooked game distributables (built by scripts/package.sh, not authored) ---
 /dist/
+
+# Local AI configs (never commit real keys/endpoints)
+/config/ai.json

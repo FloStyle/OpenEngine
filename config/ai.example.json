@@ -1,0 +1,4 @@
+{
+  "provider": { "kind": "api_key", "endpoint": "https://api.deepseek.com/v1", "key_env": "DEEPSEEK_API_KEY" },
+  "model": "deepseek-chat"
+}

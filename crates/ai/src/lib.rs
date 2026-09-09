@@ -16,6 +16,15 @@ use serde::{Deserialize, Serialize};
 /// [`providers::from_config`]. Both speak OpenAI-compatible `chat/completions`.
 pub mod providers;
 
+/// Chat-message content models: plain text and multimodal parts.
+pub mod content;
+
+/// Resolved `ModelConfig` loading + catalog helpers.
+pub mod config;
+
+pub use config::{resolve_config, ConfigSource};
+pub use content::{ChatTurn, ContentPart, TextImageContent};
+
 /// Where + which model to talk to. `kind` discriminates a remote API key from a
 /// local OpenAI-compatible endpoint (llama.cpp / unsloth / vLLM ...).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -32,6 +41,11 @@ pub enum ProviderConfig {
     Local {
         /// e.g. `http://127.0.0.1:8080/v1`.
         endpoint: String,
+        /// Optional env var holding a bearer key for a local server that
+        /// requires auth (e.g. unsloth). `None` = no auth. `#[serde(default)]`
+        /// keeps older configs (endpoint only) valid.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key_env: Option<String>,
     },
 }
 
@@ -51,7 +65,7 @@ impl ModelConfig {
     /// A human/agent-friendly one-line description (endpoint host + model).
     pub fn describe(&self) -> String {
         let host = match &self.provider {
-            ProviderConfig::ApiKey { endpoint, .. } | ProviderConfig::Local { endpoint } => {
+            ProviderConfig::ApiKey { endpoint, .. } | ProviderConfig::Local { endpoint, .. } => {
                 endpoint.clone()
             }
         };
@@ -79,12 +93,8 @@ impl std::fmt::Display for AdapterError {
 
 impl std::error::Error for AdapterError {}
 
-/// A chat turn the assistant sends.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ChatTurn {
-    pub role: String, // "system" | "user" | "assistant"
-    pub content: String,
-}
+// `ChatTurn` + `ContentPart` live in `content.rs` (re-exported at the crate
+// root via `pub use content::{...}`).
 
 /// The uniform contract every provider (cloud key or local) satisfies.
 ///
@@ -135,7 +145,8 @@ mod tests {
         assert_eq!(
             cfg.provider,
             ProviderConfig::Local {
-                endpoint: "http://127.0.0.1:8080/v1".into()
+                endpoint: "http://127.0.0.1:8080/v1".into(),
+                key_env: None,
             }
         );
     }

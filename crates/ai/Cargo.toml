@@ -6,11 +6,17 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "openengine-ai"
+path = "src/bin/ai.rs"
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Concrete ModelAdapter clients (DeepSeek + local llama.cpp) via HTTP.
 reqwest = { workspace = true }
+# base64 for image parts in multimodal chat turns.
+base64 = { workspace = true }
 
 [lints]
 workspace = true

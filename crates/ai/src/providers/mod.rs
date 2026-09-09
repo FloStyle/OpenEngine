@@ -59,6 +59,7 @@ mod tests {
         ModelConfig {
             provider: ProviderConfig::Local {
                 endpoint: "http://127.0.0.1:8080/v1".into(),
+                key_env: None,
             },
             model: "llama-3".into(),
         }
