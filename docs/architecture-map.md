@@ -21,7 +21,7 @@
 | `crates/capture` | Headless offscreen render + PNG of a `World` (wgpu, no window/egui); harness `capture` feature → `GET /frame` | `24-editor-viewport`, `52` |
 | `scripts/selfdev.sh` | Canned self-development loop (observe/spawn/verify/prove/restore) | `52` |
 | `examples/` | Authored demo scenes (e.g. `demo-chase.json`) | `50-build-deploy` |
-| `crates/ai` | Uniform model adapter: types + trait + concrete clients (DeepSeek API key, local llama.cpp/unsloth) via `ModelAdapter::from_config`; config resolution + model catalog + multimodal content parts; `openengine-ai` CLI (`describe/providers/models/test/chat/see`). | `52-ai-developer-surface`, `ADR-0002` |
+| `crates/ai` | Uniform model adapter: types + trait + concrete clients (DeepSeek API key, local llama.cpp/unsloth) via `ModelAdapter::from_config`; config resolution + model catalog + multimodal content parts + gitignored `.env` loader (env wins); `openengine-ai` CLI (`describe/providers/models/list/check/load/test/chat/see`). Secrets guarded by `scripts/check-secrets.sh` (CI). | `52-ai-developer-surface`, `ADR-0002` |
 | `crates/plugin-host` | Plugin boundary (Phase 3): `Plugin` trait + `PluginHost` lifecycle. In-process; dylib = ADR-0005. | `29-plugins`, `ADR-0005` |
 | `scripts/` | `build.sh` (logic.wasm), `package.sh` (cook a game → `dist/`), `harness.sh` (API), `ai-live-test.sh` + `ai-vision-test.sh` (gated live paths) | `50-build-deploy` |
 

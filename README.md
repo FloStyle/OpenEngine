@@ -19,13 +19,19 @@ governance lives in [`AGENTS.md`](AGENTS.md) and `.agents/`.
 | Path | Purpose |
 |------|---------|
 | `contracts/` | **The Immutable ABI.** The physical wall between domains. |
-| `crates/core` | Domain A — renderer, wasmtime host, job system. |
-| `crates/ecs` | Domain A — SoA/archetype storage. |
-| `crates/editor` | Domain A — `egui` editor system. |
-| `crates/logic-sandbox` | Domain B — pure `#![no_std]` Wasm logic. |
-| `crates/math` | Domain B — deterministic fixed-point. |
+| `crates/core` | Domain A — wasmtime host + gameplay/physics wasm bridges + meshes. |
+| `crates/ecs` | Domain A — SoA/archetype `World` storage + scene codec. |
+| `crates/editor` | Domain A — headless editor math (camera/grid/gizmo/commands). |
+| `crates/editor-shell` | Domain A — `egui`/wgpu interactive editor over the headless core. |
+| `crates/logic-sandbox` | Domain B — pure `#![no_std]` Wasm logic + physics. |
+| `crates/logic-export` | Domain B — `#[no_mangle]` wasm trampoline (tick/gameplay/physics). |
+| `crates/math` | Domain B — deterministic fixed-point (`I16F16`). |
+| `crates/harness` | Domain A — headless JSON-over-HTTP live surface + `/verify` `/schema` `/frame`. |
+| `crates/capture` | Domain A — headless offscreen render → PNG (vision `/frame`). |
+| `crates/ai` | Domain A — uniform model adapter + CLI (`openengine-ai`); `.env` keys. |
+| `crates/plugin-host` | Domain A — plugin boundary (`Plugin` trait + `PluginHost`). |
 | `brain/` | Domain C — Python orchestration (purity checks, LLM critic). |
-| `docs/` | Human-readable specs + ABI changelog. |
+| `docs/`, `docs/specs/`, `.agents/` | Specs, decisions (ADRs), skills, agent governance. |
 
 ## Start here
 
@@ -35,5 +41,11 @@ governance lives in [`AGENTS.md`](AGENTS.md) and `.agents/`.
 
 ## Status
 
-Scaffold milestone only: architecture, ABI contracts, and AI governance files.
-The ECS and renderer implementations are intentionally not yet written.
+Beyond the scaffold: a live ECS (`crates/ecs`), an interactive `egui` editor
+(`crates/editor-shell`), deterministic Wasm gameplay + fixed-point physics
+(Domain B), a headless harness (`/observe /spawn /tick /prove /verify /schema
+/frame`), a plugin boundary, and an AI-connected model adapter + CLI
+(`openengine-ai test|chat|see`) with **vision**: a multimodal model can look at
+the engine's live rendered world. See [`STATE.md`](STATE.md) for the detailed,
+current record. API keys live in a gitignored `.env` (never committed) — see
+[`docs/spawn-agent.md`](docs/spawn-agent.md) and `.env.example`.

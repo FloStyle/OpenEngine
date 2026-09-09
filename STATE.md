@@ -82,6 +82,12 @@ handles, toolbar icons, fine look&feel) — needs your display to validate.
   `openengine-ai see` round-trip described the live /frame:
   *"A red hemisphere and a blue hemisphere rest on the grey and white checkered
   floor."* → real PNG in `docs/img/frame-demo.png`. (→ 123 tests.)
+- **Local secrets (`.env` + gitignore, `feat/dotenv-secrets`)**: gitignored
+  `.env` at the workspace root (env vars win) loaded once at startup by
+  `openengine-ai`; `.env.example` committed template; `.rgignore` excludes it.
+  Guards: `scripts/check-secrets.sh` (a CI job) fails on any tracked `.env`;
+  `scripts/package.sh` refuses to ship one into `dist/`; AGENTS.md secrets rule.
+  (`openengine-ai` CLI + config resolution read keys via env or `.env`.)
 
 
 ## Important Notes

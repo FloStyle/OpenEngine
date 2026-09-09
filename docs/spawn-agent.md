@@ -75,17 +75,28 @@ client, so the assistant code never branches on provider.
 
 ### Configure your key and test it
 
-Config resolution order: `--config <path>` > `$OPENENGINE_AI_CONFIG` >
-`./config/ai.json`. Keys are **never** in the file (env only). Copy
-`config/ai.example.json` (DeepSeek) or `config/ai-local.example.json`
-(unsloth/llama.cpp) to `config/ai.json` and set the key env:
+**Key resolution order (env wins):** a real environment variable > a gitignored
+workspace `.env` (loaded once at startup) > a typed "missing key" error. Keys are
+**never** in a config file — `ProviderConfig` only names the env var (`key_env`).
+
+Quickest local workflow — copy the template and fill it (never commit `.env`):
 
 ```bash
-export DEEPSEEK_API_KEY=sk-...            # for an ApiKey config
-# or for a Local server that needs auth (unsloth):
-export UNSLOTH_API_KEY=sk-...
-# or the local server needs no key:
-#   config/ai-local.example.json without key_env
+cp .env.example .env            # then edit .env and paste your real keys
+# .env is gitignored; .env.example is the committed placeholder.
+# Note: config/ai.json's ApiKey provider references key_env (e.g. DEEPSEEK_API_KEY).
+```
+
+Config resolution order for *which model*: `--config <path>` >
+`$OPENENGINE_AI_CONFIG` > `./config/ai.json`. Copy `config/ai.example.json`
+(DeepSeek) or `config/ai-local.example.json` (unsloth/llama.cpp) to
+`config/ai.json`, then either export the key or put it in `.env`:
+
+```bash
+# Option A — export (authoritative; wins over .env):
+export DEEPSEEK_API_KEY=sk-...            # ApiKey config
+export UNSLOTH_API_KEY=sk-...             # auth'd local (unsloth)
+# Option B — put the same NAME=VALUE in the gitignored .env at the repo root.
 
 # Ping it — the key+model test:
 cargo run -p openengine-ai -- test --config config/ai.json
@@ -97,7 +108,9 @@ cargo run -p openengine-ai -- models
 
 > The built-in DeepSeek example expects `DEEPSEEK_API_KEY`; the committed
 > `config/ai-local.example.json` targets a local unsloth at
-> `127.0.0.1:8889/v1` reading `UNSLOTH_API_KEY`.
+> `127.0.0.1:8889/v1` reading `UNSLOTH_API_KEY`. Guards
+> (`bash scripts/check-secrets.sh`, a CI job) ensure no `.env` is ever tracked,
+> and `scripts/package.sh` refuses to ship one into `dist/`.
 
 ### Vision — make a model see the live scene
 
