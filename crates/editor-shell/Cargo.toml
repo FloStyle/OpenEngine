@@ -23,6 +23,8 @@ openengine-contracts = { workspace = true }
 openengine-math = { workspace = true }
 # Phase 3: the shell hosts real editor tools behind the plugin boundary.
 openengine-plugin-host = { path = "../plugin-host" }
+# AI panel: chat with the model + apply its proposals to the edit world.
+openengine-ai = { path = "../ai" }
 bytemuck.workspace = true
 glam.workspace = true
 pollster.workspace = true

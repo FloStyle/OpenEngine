@@ -79,6 +79,8 @@ pub struct EditorApp {
     pub screenshot_requested: bool,
     /// Session notice about the last screenshot/AI status.
     pub ai_notice: Option<String>,
+    /// The AI / harness chat panel (floating, dockable).
+    pub ai_panel: crate::ai::AiPanel,
 }
 
 /// Unreal-like editor transform tools.
@@ -88,6 +90,14 @@ pub enum EditorTool {
     Move,
     Rotate,
     Scale,
+}
+
+/// A pending AI-panel action (staged during the window render, run after).
+enum AiAction {
+    /// Send the message as a plain chat turn.
+    Chat(String),
+    /// Ask the model for a typed ops batch and apply it to the edit world.
+    Propose(String),
 }
 
 /// Loads + holds the guest gameplay module and paces ticks at a fixed 60 Hz.
@@ -118,6 +128,14 @@ impl Default for PlayBackend {
 
 fn x(v: f32) -> I16F16 {
     I16F16::from_num(v)
+}
+
+/// A one-line status of the configured model (for the AI panel).
+fn ai_status_line() -> String {
+    match openengine_ai::config::resolve_config(None) {
+        Ok((cfg, src)) => format!("{src}: {} @ {}", cfg.model, cfg.describe()),
+        Err(_) => "no model configured (see .env / config/ai.json)".to_string(),
+    }
 }
 
 fn tf(pos: [f32; 3]) -> Transform {
@@ -220,6 +238,7 @@ impl EditorApp {
             rename_target: None,
             screenshot_requested: false,
             ai_notice: None,
+            ai_panel: crate::ai::AiPanel::new(),
         };
         // Default framing so the spawned spheres (x in 0..25) are visible.
         app.camera.focus = glam::Vec3::new(12.5, 0.0, 0.0);
@@ -860,6 +879,16 @@ impl EditorApp {
                 if load.clicked() {
                     self.load_scene();
                 }
+                ui.separator();
+                // AI / harness chat panel (floating, dockable).
+                let ai_label = if self.ai_panel.open {
+                    "🤖 AI ▸"
+                } else {
+                    "🤖 AI"
+                };
+                if ui.button(ai_label).clicked() {
+                    self.ai_panel.open = !self.ai_panel.open;
+                }
                 ui.add(
                     egui::TextEdit::singleline(&mut self.scene_path)
                         .desired_width(150.0)
@@ -1050,9 +1079,154 @@ impl EditorApp {
                     self.undo.execute(&mut self.state.edit_world, cmd);
                 }
             });
+        // Floating, dockable AI / harness chat panel (drawn last, on top).
+        if self.ai_panel.open {
+            self.show_ai_panel(ctx);
+        }
     }
 
-    /// Serialize the current EDIT scene to `self.scene_path` (ecs scene codec —
+    /// The floating AI / harness chat panel: talk to the configured model, and
+    /// (Propose+Apply) apply its typed ops to the edit world on the screen.
+    fn show_ai_panel(&mut self, ctx: &egui::Context) {
+        let can_edit = self.state.can_edit();
+        let mut open = self.ai_panel.open;
+        let mut staged: Option<AiAction> = None;
+        egui::Window::new("🤖 AI — harness")
+            .default_pos([420.0, 260.0])
+            .default_size([380.0, 300.0])
+            .open(&mut open)
+            .resizable(true)
+            .show(ctx, |ui| {
+                let panel = &mut self.ai_panel;
+                ui.horizontal(|ui| {
+                    ui.label("Model:");
+                    if ui.button("configured?").clicked() {
+                        panel.notice = ai_status_line();
+                    }
+                });
+                ui.separator();
+                ui.label("Message:");
+                ui.text_edit_multiline(&mut panel.input);
+                ui.horizontal(|ui| {
+                    if ui.button("💬 Chat").clicked() {
+                        staged = Some(AiAction::Chat(panel.input.clone()));
+                    }
+                    let propose = ui.add_enabled(
+                        can_edit && !panel.input.is_empty(),
+                        egui::Button::new("⚙️ Propose + Apply"),
+                    );
+                    if propose.clicked() {
+                        staged = Some(AiAction::Propose(panel.input.clone()));
+                    }
+                });
+                if !panel.notice.is_empty() {
+                    ui.label(egui::RichText::new(&panel.notice).weak());
+                }
+                ui.separator();
+                ui.label(egui::RichText::new("Reply:").strong());
+                ui.add(egui::Label::new(
+                    egui::RichText::new(&panel.reply).monospace(),
+                ));
+                if !panel.last_applied.is_empty() {
+                    ui.separator();
+                    ui.label(egui::RichText::new("Applied:").strong());
+                    for line in &panel.last_applied {
+                        ui.monospace(line);
+                    }
+                }
+            });
+        self.ai_panel.open = open;
+        if let Some(a) = staged {
+            match a {
+                AiAction::Chat(m) => self.ai_chat(&m),
+                AiAction::Propose(m) => self.ai_propose_apply(&m),
+            }
+        }
+    }
+
+    /// Chat mode: send the message to the configured model, show the reply.
+    fn ai_chat(&mut self, msg: &str) {
+        if msg.trim().is_empty() {
+            self.ai_panel.notice = "enter a message".into();
+            return;
+        }
+        let cfg = match openengine_ai::config::resolve_config(None) {
+            Ok((c, _)) => c,
+            Err(e) => {
+                self.ai_panel.notice = format!("no model: {e}");
+                return;
+            }
+        };
+        let turns = vec![
+            openengine_ai::ChatTurn::text(
+                "system",
+                "You are the OpenEngine editor assistant. Answer concisely.",
+            ),
+            openengine_ai::ChatTurn::text("user", msg),
+        ];
+        match openengine_ai::providers::from_config(&cfg) {
+            Ok(a) => match a.complete(&turns) {
+                Ok(r) => {
+                    self.ai_panel.reply = r;
+                    self.ai_panel.notice = "chat ok".into();
+                }
+                Err(e) => self.ai_panel.notice = format!("model: {e}"),
+            },
+            Err(e) => self.ai_panel.notice = format!("model init: {e}"),
+        }
+    }
+
+    /// Propose+Apply: ask the model for a typed ops batch, apply to edit world.
+    fn ai_propose_apply(&mut self, msg: &str) {
+        if msg.trim().is_empty() {
+            self.ai_panel.notice = "enter a message".into();
+            return;
+        }
+        let cfg = match openengine_ai::config::resolve_config(None) {
+            Ok((c, _)) => c,
+            Err(e) => {
+                self.ai_panel.notice = format!("no model: {e}");
+                return;
+            }
+        };
+        let instruction = "\
+            You are the OpenEngine resident editor assistant. The user is editing a \
+            3D scene. Reply with ONLY a JSON proposal batch of ops to carry out the \
+            request, e.g. {\"ops\":[{\"op\":\"spawn\",\"transform\":[1,0,0],\
+            \"color\":[255,0,0,255]},{\"op\":\"set\",\"entity\":2,\"component\":\
+            \"transform\",\"value\":[2,0,0]},{\"op\":\"despawn\",\"entity\":0}]}. \
+            Ops: spawn (transform/scale/color), set (entity/component/value), \
+            despawn (entity). No prose outside the JSON.";
+        let turns = vec![
+            openengine_ai::ChatTurn::text("system", instruction),
+            openengine_ai::ChatTurn::text("user", msg),
+        ];
+        let reply = match openengine_ai::providers::from_config(&cfg) {
+            Ok(a) => match a.complete(&turns) {
+                Ok(r) => r,
+                Err(e) => {
+                    self.ai_panel.notice = format!("model: {e}");
+                    return;
+                }
+            },
+            Err(e) => {
+                self.ai_panel.notice = format!("model init: {e}");
+                return;
+            }
+        };
+        self.ai_panel.reply = reply.clone();
+        match openengine_ai::parse_proposal(&reply) {
+            Ok(batch) => match crate::ai::apply_proposal(&mut self.state.edit_world, &batch) {
+                Ok(applied) => {
+                    self.ai_panel.last_applied = applied.clone();
+                    self.ai_panel.notice = format!("applied {} op(s)", applied.len());
+                }
+                Err(e) => self.ai_panel.notice = format!("apply failed: {e}"),
+            },
+            Err(e) => self.ai_panel.notice = format!("bad proposal: {e}"),
+        }
+    }
+
     /// the same format the runner/package pipeline consumes).
     pub fn save_scene(&mut self) {
         let content = openengine_ecs::scene::content_from_world(&self.state.edit_world);

@@ -1896,6 +1896,7 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "glam",
+ "openengine-ai",
  "openengine-contracts",
  "openengine-core",
  "openengine-ecs",

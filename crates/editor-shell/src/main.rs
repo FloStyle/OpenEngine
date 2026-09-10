@@ -352,6 +352,8 @@ impl Shell {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Load a gitignored workspace .env so the AI panel's key resolves.
+    let _ = openengine_ai::load_dotenv();
     let args: Vec<String> = std::env::args().collect();
     // `--play <scene.json>` auto-loads and plays a saved scene.
     let mut play = None;
